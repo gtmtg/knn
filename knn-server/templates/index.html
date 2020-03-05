@@ -7,7 +7,7 @@
     </head>
 
     <body>
-        <button id="toggle">Start</button>
+        <button id="toggle"></button>
         <ol id="results"></ol>
     </body>
 
@@ -19,28 +19,22 @@
         let running = false;
         let poll;
 
-        $("#toggle").click(function() {
-            running = !running;
+        const set_running = (data) => {
+            running = data.running;
             $("#toggle").html(running ? "Stop" : "Start");
 
             if (running) {
                 $("#results").empty();
-                poll = setInterval(get_results, poll_interval);
+                poll = setInterval(
+                    () => $.getJSON(server_url + "/results", display_results),
+                    poll_interval
+                );
             } else {
                 clearInterval(poll);
             }
+        };
 
-            $.ajax({
-                url: server_url + (running ? "/turn_on" : "/turn_off"),
-                type: "POST"
-            });
-        });
-
-        function get_results() {
-            $.getJSON(server_url + "/get_results", display_results);
-        }
-
-        function display_results(data) {
+        const display_results = (data) => {
             if (running) {
                 let result_html = "";
                 for (const result of data.results) {
@@ -49,6 +43,27 @@
                 $("#results").html(result_html);
             }
         }
+
+        $("#toggle").click(() => {
+            $("#toggle").html("...");
+            $.ajax({
+                url: server_url + "/toggle",
+                type: "POST",
+                data: JSON.stringify({
+                    image: "images/val2017/000000000139.jpg",
+                    patch: [
+                        0,   // x1
+                        160, // y1
+                        170, // x2
+                        280  // y2
+                    ]
+                }),
+                contentType: "application/json",
+                success: set_running
+            });
+        });
+
+        $.get(server_url + "/running", set_running);
     </script>
 
 </html>

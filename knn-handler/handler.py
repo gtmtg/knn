@@ -1,6 +1,7 @@
 # import http
 # import json
 
+import base64
 from io import BytesIO
 import math
 import os
@@ -51,7 +52,8 @@ def handler():
     event = request.get_json()
     results = {}
 
-    template = np.fromstring(event["template"], dtype=config.TEMPLATE_DTYPE)
+    template_buffer = base64.b64decode(event["template"])
+    template = np.frombuffer(template_buffer, dtype=config.TEMPLATE_DTYPE)
     template = torch.from_numpy(template).unsqueeze(dim=0).unsqueeze(dim=0)
 
     for image_cloud_path in event["images"]:
@@ -67,7 +69,7 @@ def handler():
     # return "", http.client.NO_CONTENT
 
 
-@app.route("/get_embedding", method=["POST"])
+@app.route("/get_embedding", methods=["POST"])
 def get_embedding():
     event = request.get_json()
 
@@ -78,7 +80,7 @@ def get_embedding():
     x2, y2 = [math.ceil(dim / config.RESNET_DOWNSAMPLE_FACTOR) for dim in (x2, y2)]
 
     embedding = result[0, :, y1:y2, x1:x2].mean(dim=-1).mean(dim=-1)
-    return embedding.astype(config.TEMPLATE_DTYPE).tostring()
+    return base64.b64encode(embedding.numpy().astype(config.TEMPLATE_DTYPE))
 
 
 def run_inference(image_cloud_path):
@@ -99,8 +101,9 @@ def run_inference(image_cloud_path):
 
 
 def compute_knn_score(image, template):
-    assert image.size[0] == 1  # batch dimension
-    image = image.view(1, image.size[1], -1).permute(0, 2, 1)  # N(HW)C
+    assert image.size(0) == 1  # batch dimension
+    image = image.view(1, image.size(1), -1).permute(0, 2, 1)  # N(HW)C
 
-    distances = torch.cdist(image, template)
-    return torch.topk(distances, config.N_DISTANCES_TO_AVERAGE).values.mean()
+    distances = torch.cdist(image, template).view(-1)
+    max_neg_distances = torch.topk(-distances, config.N_DISTANCES_TO_AVERAGE).values
+    return max_neg_distances.mean().item()

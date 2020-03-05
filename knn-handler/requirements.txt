@@ -5,6 +5,7 @@ torchvision==0.5.0+cpu
 pycocotools
 detectron2
 google-cloud-storage
+google-cloud-pubsub
 numpy
 Flask
 gunicorn
