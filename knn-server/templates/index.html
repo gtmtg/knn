@@ -1,0 +1,54 @@
+<!doctype html>
+
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>knn</title>
+    </head>
+
+    <body>
+        <button id="toggle">Start</button>
+        <ol id="results"></ol>
+    </body>
+
+    <script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script type="text/javascript">
+        const server_url = "http://localhost:5000";
+        const poll_interval = 500;  // ms
+
+        let running = false;
+        let poll;
+
+        $("#toggle").click(function() {
+            running = !running;
+            $("#toggle").html(running ? "Stop" : "Start");
+
+            if (running) {
+                $("#results").empty();
+                poll = setInterval(get_results, poll_interval);
+            } else {
+                clearInterval(poll);
+            }
+
+            $.ajax({
+                url: server_url + (running ? "/turn_on" : "/turn_off"),
+                type: "POST"
+            });
+        });
+
+        function get_results() {
+            $.getJSON(server_url + "/get_results", display_results);
+        }
+
+        function display_results(data) {
+            if (running) {
+                let result_html = "";
+                for (const result of data.results) {
+                    result_html += `<li>${result}</li>`;
+                }
+                $("#results").html(result_html);
+            }
+        }
+    </script>
+
+</html>
