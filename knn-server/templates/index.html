@@ -7,11 +7,17 @@
     </head>
 
     <body>
+        <canvas id="main_canvas" width="640" height="605"></canvas>
+        <br>
         <button id="toggle"></button>
+        <button id="clear" onclick="handle_clear_boxes()">Clear</button>
+        <p id="stats"></p>
         <ol id="results"></ol>
     </body>
 
     <script type="text/javascript" src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script type="text/javascript" src="{{ url_for('static', filename='kmath.js') }}"></script>
+    <script type="text/javascript" src="{{ url_for('static', filename='klabel.js') }}"></script>
     <script type="text/javascript">
         const server_url = "http://localhost:5000";
         const poll_interval = 500;  // ms
@@ -19,12 +25,16 @@
         let running = false;
         let poll;
 
+        var labeler = new ImageLabeler;
+
         const set_running = (data) => {
+            console.log('hi');
             running = data.running;
             $("#toggle").html(running ? "Stop" : "Start");
 
             if (running) {
                 $("#results").empty();
+                $("#stats").empty();
                 poll = setInterval(
                     () => $.getJSON(server_url + "/results", display_results),
                     poll_interval
@@ -41,29 +51,60 @@
                     result_html += `<li>${result}</li>`;
                 }
                 $("#results").html(result_html);
+                $("#stats").html(`Processed ${data.num_processed}, skipped ${data.num_skipped} of 5000`);
             }
         }
 
         $("#toggle").click(() => {
+            let annotations = labeler.get_annotations()[0].annotations;
+            if (annotations.length != 1) return;
+            let bbox = annotations[0].bbox;
+            let patch = [
+                640 * bbox.bmin.x, // x1
+                605 * bbox.bmin.y, // y1
+                640 * bbox.bmax.x, // x2
+                605 * bbox.bmax.y  // y2
+            ];
+            console.log(patch);
+
             $("#toggle").html("...");
             $.ajax({
                 url: server_url + "/toggle",
                 type: "POST",
                 data: JSON.stringify({
-                    image: "images/val2017/000000000139.jpg",
-                    patch: [
-                        0,   // x1
-                        160, // y1
-                        170, // x2
-                        280  // y2
-                    ]
+                    image: "images/val2017/000000050811.jpg",
+                    patch
                 }),
                 contentType: "application/json",
-                success: set_running
+                success: set_running,
+                error: () => $("#toggle").html(running ? "Stop" : "Start"),
             });
         });
 
         $.get(server_url + "/running", set_running);
+
+
+        var main_canvas = document.getElementById('main_canvas');
+        labeler.init(main_canvas);
+
+        // set the data source
+        var filenames = ["https://storage.googleapis.com/mihir-knn/images/val2017/000000050811.jpg"];
+
+        var image_data = [];
+
+        for (var i=0; i<filenames.length; i++) {
+            var data = new ImageData;
+            data.source_url = filenames[i];
+            image_data.push(data);
+        }
+
+        labeler.load_image_stack(image_data);
+
+        labeler.set_annotation_mode(Annotation.ANNOTATION_MODE_EXTREME_POINTS_BBOX);
+
+        function handle_clear_boxes() {
+            labeler.clear_boxes();
+        }
     </script>
 
 </html>

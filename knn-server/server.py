@@ -1,6 +1,7 @@
 import functools
 import heapq
 from multiprocessing import dummy as multiprocessing
+import uuid
 
 from flask import Flask, jsonify, render_template, request
 import requests
@@ -12,7 +13,10 @@ running = False
 image_list = open(config.IMAGE_LIST_PATH, "r")
 state_lock = multiprocessing.Lock()
 
+num_processed = 0
+num_skipped = 0
 results = []  # min-heap
+current_id = None
 results_lock = multiprocessing.Lock()
 
 pool = multiprocessing.Pool(processes=config.MAX_CONCURRENT_REQUESTS)
@@ -58,51 +62,71 @@ def toggle():
     with state_lock:
         global running
         running = not running
-        running_copy = running
+        if not running:
+            return jsonify(running=False)
 
-        if running:
-            image_list.seek(0)
+        image_list.seek(0)
 
-    if running_copy:
-        r = requests.post(
-            f"{config.HANDLER_URL}{config.EMBEDDING_ENDPOINT}", json=request.get_json()
-        )
-        r.raise_for_status()
-        worker_fn = functools.partial(thread_worker, template=r.text)
+    r = requests.post(
+        f"{config.HANDLER_URL}{config.EMBEDDING_ENDPOINT}", json=request.get_json()
+    )
+    r.raise_for_status()
 
     with results_lock:
+        global num_processed
+        global num_skipped
+        global current_id
+        num_processed = 0
+        num_skipped = 0
         results.clear()
+        current_id = uuid.uuid4()
 
-        if running_copy:
-            pool.imap_unordered(worker_fn, image_chunk_gen())
-        else:
-            pool.terminate()
-            pool.join()
+        worker_fn = functools.partial(thread_worker, template=r.text, id=current_id)
+        pool.imap_unordered(worker_fn, image_chunk_gen())
 
-    return jsonify(running=running_copy)
+    return jsonify(running=True)
 
 
 @app.route("/results")
 def get_results():
     with results_lock:
         sorted_results = sorted(results)
+        num_processed_copy = num_processed
+        num_skipped_copy = num_skipped
 
     def get_display_string(result_tuple):
-        neg_score, image_name = result_tuple
-        return f'{image_name} ({-neg_score})<br><img src="{config.IMAGE_URL_FORMAT.format(image_name)}" style="width: 250px;"/>'  # noqa
+        score, image_name, score_map = result_tuple
+        return f'{image_name} ({score})<br><img src="{config.IMAGE_URL_FORMAT.format(image_name)}" style="width: 250px;"/><img src="data:image/jpeg;base64,{score_map}" style="width: 250px;"/>'  # noqa
 
-    return jsonify(results=list(map(get_display_string, sorted_results)))
+    return jsonify(
+        num_processed=num_processed_copy,
+        num_skipped=num_skipped_copy,
+        results=[get_display_string(r) for r in reversed(sorted_results)],
+    )
 
 
-def thread_worker(images, template):
+def thread_worker(images, template, id):
     j = {"template": template, "images": images}
-    r = requests.post(f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=j)
-    chunk_results = r.json()
+    try:
+        r = requests.post(f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=j)
+        r.raise_for_status()
+        chunk_results = r.json()
+    except Exception:
+        chunk_results = {}
 
     with results_lock:
-        for image_name, neg_score in chunk_results.items():
-            result_tuple = (neg_score, image_name)
-            if len(results) < config.N_RESULTS_TO_DISPLAY:
-                heapq.heappush(results, result_tuple)
-            elif result_tuple > results[0]:
-                heapq.heapreplace(results, result_tuple)
+        if id == current_id:
+            global num_processed
+            global num_skipped
+            num_processed += len(chunk_results)
+            num_skipped += len(images) - len(chunk_results)
+            for image_name, result in chunk_results.items():
+                result_tuple = (result["score"], image_name, result["score_map"])
+                if len(results) < config.N_RESULTS_TO_DISPLAY:
+                    heapq.heappush(results, result_tuple)
+                elif result_tuple > results[0]:
+                    heapq.heapreplace(results, result_tuple)
+        else:
+            print(id, current_id)
+
+    return True
