@@ -1,4 +1,3 @@
-import functools
 import heapq
 from multiprocessing import dummy as multiprocessing
 import uuid
@@ -15,6 +14,13 @@ state_lock = multiprocessing.Lock()
 
 num_processed = 0
 num_skipped = 0
+cost = 0
+
+total_time = 0
+total_gcr_time = 0
+total_compute_time = 0
+num_requests_done = 0
+
 results = []  # min-heap
 current_id = None
 results_lock = multiprocessing.Lock()
@@ -29,6 +35,104 @@ app = Flask(__name__)
 @app.route("/")
 def homepage():
     return render_template("index.html")
+
+
+@app.route("/running")
+def get_running():
+    with state_lock:
+        running_copy = running
+    return jsonify(running=running_copy)
+
+
+@app.route("/toggle", methods=["POST"])
+def toggle():
+    global running
+    with state_lock:
+        running_copy = running
+
+    template = None
+    if not running_copy:
+        if request.get_json():
+            for i in range(config.NUM_TEMPLATE_RETRIES):
+                r = requests.post(
+                    f"{config.HANDLER_URL}{config.EMBEDDING_ENDPOINT}",
+                    json=request.get_json(),
+                )
+                if r.status_code == 200:
+                    template = r.text
+                    break
+        if not template:
+            return
+
+    with state_lock:
+        running = not running
+        if not running:
+            return jsonify(running=False)
+
+        image_list.seek(0)
+
+    with results_lock:
+        results.clear()
+
+        global num_processed
+        global num_skipped
+        global cost
+        num_processed = 0
+        num_skipped = 0
+        cost = 0
+
+        global total_time
+        global total_gcr_time
+        global total_compute_time
+        total_time = 0
+        total_gcr_time = 0
+        total_compute_time = 0
+
+        global current_id
+        current_id = uuid.uuid4()
+
+        pool.starmap_async(
+            thread_worker, [(template, current_id)] * config.MAX_CONCURRENT_REQUESTS
+        )
+
+    return jsonify(running=True)
+
+
+@app.route("/results")
+def get_results():
+    with results_lock:
+        sorted_results = sorted(results)
+
+        cost_copy = cost
+        num_processed_copy = num_processed
+        num_skipped_copy = num_skipped
+
+        if num_processed:
+            avg_total_time = total_time / num_processed
+            avg_gcr_time = total_gcr_time / num_processed
+            avg_compute_time = total_compute_time / num_processed
+        else:
+            avg_total_time = 0
+            avg_gcr_time = 0
+            avg_compute_time = 0
+
+    def get_display_string(result_tuple):
+        score, image_name, score_map = result_tuple
+        return f'{image_name} ({score})<br><img src="{config.IMAGE_URL_FORMAT.format(image_name)}" style="width: 250px;"/><img src="data:image/jpeg;base64,{score_map}" style="width: 250px;"/>'  # noqa
+
+    return jsonify(
+        stats=dict(
+            cost=cost_copy,
+            num_processed=num_processed_copy,
+            num_skipped=num_skipped_copy,
+            num_total=config.N_TOTAL_IMAGES,
+            #
+            total_time=avg_total_time,
+            gcr_time=avg_gcr_time,
+            compute_time=avg_compute_time,
+        ),
+        results=[get_display_string(r) for r in reversed(sorted_results)],
+    )
 
 
 def image_chunk_gen():
@@ -50,83 +154,51 @@ def image_chunk_gen():
         yield images
 
 
-@app.route("/running")
-def get_running():
-    with state_lock:
-        running_copy = running
-    return jsonify(running=running_copy)
+def thread_worker(template, id):
+    for image_chunk in image_chunk_gen():
+        j = {"template": template, "images": image_chunk, "include_score_map": True}
+        try:
+            r = requests.post(
+                f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=j
+            )
+            r.raise_for_status()
+            chunk_results = r.json()
+        except Exception:
+            chunk_results = {}
 
+        with results_lock:
+            if id != current_id:
+                break
 
-@app.route("/toggle", methods=["POST"])
-def toggle():
-    with state_lock:
-        global running
-        running = not running
-        if not running:
-            return jsonify(running=False)
+            timings = chunk_results.pop("elapsed", None)
+            if timings:
+                global cost
 
-        image_list.seek(0)
+                cost += (
+                    0.00002400 * timings["total"]
+                    + 2 * 0.00000250 * timings["total"]
+                    + 0.40 / 1000000
+                )
 
-    r = requests.post(
-        f"{config.HANDLER_URL}{config.EMBEDDING_ENDPOINT}", json=request.get_json()
-    )
-    r.raise_for_status()
+                global total_time
+                global total_gcr_time
+                global total_compute_time
 
-    with results_lock:
-        global num_processed
-        global num_skipped
-        global current_id
-        num_processed = 0
-        num_skipped = 0
-        results.clear()
-        current_id = uuid.uuid4()
+                total_time += r.elapsed.total_seconds()
+                total_gcr_time += timings["total"]
+                total_compute_time += timings["compute"]
 
-        worker_fn = functools.partial(thread_worker, template=r.text, id=current_id)
-        pool.imap_unordered(worker_fn, image_chunk_gen())
-
-    return jsonify(running=True)
-
-
-@app.route("/results")
-def get_results():
-    with results_lock:
-        sorted_results = sorted(results)
-        num_processed_copy = num_processed
-        num_skipped_copy = num_skipped
-
-    def get_display_string(result_tuple):
-        score, image_name, score_map = result_tuple
-        return f'{image_name} ({score})<br><img src="{config.IMAGE_URL_FORMAT.format(image_name)}" style="width: 250px;"/><img src="data:image/jpeg;base64,{score_map}" style="width: 250px;"/>'  # noqa
-
-    return jsonify(
-        num_processed=num_processed_copy,
-        num_skipped=num_skipped_copy,
-        results=[get_display_string(r) for r in reversed(sorted_results)],
-    )
-
-
-def thread_worker(images, template, id):
-    j = {"template": template, "images": images}
-    try:
-        r = requests.post(f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=j)
-        r.raise_for_status()
-        chunk_results = r.json()
-    except Exception:
-        chunk_results = {}
-
-    with results_lock:
-        if id == current_id:
             global num_processed
             global num_skipped
+
             num_processed += len(chunk_results)
-            num_skipped += len(images) - len(chunk_results)
+            num_skipped += len(image_chunk) - len(chunk_results)
+
             for image_name, result in chunk_results.items():
                 result_tuple = (result["score"], image_name, result["score_map"])
                 if len(results) < config.N_RESULTS_TO_DISPLAY:
                     heapq.heappush(results, result_tuple)
                 elif result_tuple > results[0]:
                     heapq.heapreplace(results, result_tuple)
-        else:
-            print(id, current_id)
 
     return True

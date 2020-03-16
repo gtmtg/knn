@@ -4,6 +4,7 @@ import io
 import math
 import os
 import pathlib
+import time
 
 from flask import Flask, jsonify, request
 from google.cloud import storage, pubsub
@@ -51,14 +52,22 @@ app = Flask(__name__)
 
 @app.route("/", methods=["POST"])
 def handler():
+    start_time = time.time()
+
     event = request.get_json()
     template = deserialize(event["template"]).unsqueeze(dim=0)
     results = collections.defaultdict(dict)
 
+    results["elapsed"]["compute"] = 0
+
     for image_cloud_path in event["images"]:
         try:
-            result = run_inference(image_cloud_path)
+            image = download_image(image_cloud_path)
+
+            compute_start_time = time.time()
+            result = run_inference(image)
             score_map, score = compute_knn_score(result, template)
+            results["elapsed"]["compute"] += time.time() - compute_start_time
 
             results[image_cloud_path]["score"] = score
             if event.get("include_score_map"):
@@ -66,6 +75,8 @@ def handler():
                 results[image_cloud_path]["score_map"] = score_map_base64
         except AssertionError:
             pass
+
+    results["elapsed"]["total"] = time.time() - start_time
 
     return jsonify(results)
 
@@ -77,7 +88,8 @@ def handler():
 def get_embedding():
     event = request.get_json()
 
-    result = run_inference(event["image"])
+    image = download_image(event["image"])
+    result = run_inference(image)
 
     x1, y1, x2, y2 = event["patch"]
     x1, y1 = [math.floor(dim / config.RESNET_DOWNSAMPLE_FACTOR) for dim in (x1, y1)]
@@ -88,16 +100,17 @@ def get_embedding():
     return serialize(embedding)
 
 
-def run_inference(image_cloud_path):
-    # Load image
+def download_image(image_cloud_path):
     image_buffer = io.BytesIO()
     image_blob = storage_bucket.blob(image_cloud_path)
     image_blob.download_to_file(image_buffer)
     image = Image.open(image_buffer)
     image = image_to_tensor(image)
     image_buffer.close()
+    return image
 
-    # Run inference
+
+def run_inference(image):
     with torch.no_grad():
         result = model(image)
     assert len(result) == 1
