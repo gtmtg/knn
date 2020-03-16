@@ -170,7 +170,7 @@
         }
 
         const display_results = (data) => {
-            if (running && data.running) {
+            if (running) {
                 let result_html = "";
                 for (const result of data.results) {
                     result_html += `<li>${result}</li>`;
@@ -178,8 +178,8 @@
                 $("#results").html(result_html);
                 update_stats(data.stats);
                 update_workers(data.workers);
-            } else {
-                set_running({running: false});
+
+                if (!data.running) set_running({running: false});
             }
         }
 

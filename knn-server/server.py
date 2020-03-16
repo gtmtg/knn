@@ -148,7 +148,6 @@ def get_results():
 
 
 def image_chunk_gen():
-    global running
     while True:
         images = []
         with state_lock:
@@ -157,7 +156,6 @@ def image_chunk_gen():
 
             first_image = image_list.readline().rstrip()
             if not first_image:
-                running = False
                 break
             images.append(first_image)
 
@@ -216,5 +214,12 @@ def thread_worker(template, id):
                     heapq.heappush(results, result_tuple)
                 elif result_tuple > results[0]:
                     heapq.heapreplace(results, result_tuple)
+
+    with results_lock:
+        finished = num_processed + num_skipped >= config.N_TOTAL_IMAGES
+    if finished:
+        with state_lock:
+            global running
+            running = False
 
     return True
