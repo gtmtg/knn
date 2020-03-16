@@ -12,7 +12,7 @@
         <div class="container">
             <div class="row">
                 <div class="col-9">
-                    <canvas id="main_canvas" width="640" height="605"></canvas>
+                    <canvas id="main_canvas" width="640" height="480"></canvas>
                     <br>
                     <button id="toggle"></button>
                     <button id="clear" onclick="handle_clear_boxes()">Clear Boxes</button>
@@ -53,6 +53,14 @@
     <script type="text/javascript">
         const server_url = "http://localhost:5000";
         const poll_interval = 500;  // ms
+        const image_url_prefix = "https://storage.googleapis.com/mihir-knn/";
+        const images = [
+            "images/val2017/000000050811.jpg",
+            "images/val2017/000000230983.jpg",
+            "images/val2017/000000038118.jpg",
+            "images/val2017/000000001584.jpg",
+            "images/val2017/000000213593.jpg",
+        ];
 
         let running = false;
         let poll;
@@ -74,6 +82,7 @@
                 );
             } else {
                 $("#stats").hide();
+                prev_stats = undefined;
                 clearInterval(poll);
             }
         };
@@ -142,20 +151,23 @@
         }
 
         $("#toggle").click(() => {
-            let annotations = labeler.get_annotations()[0].annotations;
+            let annotations = labeler.get_annotations()[labeler.get_current_frame_num()].annotations;
             let payload = {};
             if (annotations.length === 1) {
                 let bbox = annotations[0].bbox;
+                let source_image = labeler.get_current_frame().source_image;
+                console.log(source_image)
                 let patch = [
-                    640 * bbox.bmin.x, // x1
-                    605 * bbox.bmin.y, // y1
-                    640 * bbox.bmax.x, // x2
-                    605 * bbox.bmax.y  // y2
+                    source_image.naturalWidth  * bbox.bmin.x, // x1
+                    source_image.naturalHeight * bbox.bmin.y, // y1
+                    source_image.naturalWidth  * bbox.bmax.x, // x2
+                    source_image.naturalHeight * bbox.bmax.y  // y2
                 ];
                 payload = {
-                    image: "images/val2017/000000050811.jpg",
+                    image: images[labeler.get_current_frame_num()],
                     patch
                 };
+                console.log(payload)
             }
 
             $("#toggle").html("...");
@@ -176,14 +188,11 @@
         var main_canvas = document.getElementById('main_canvas');
         labeler.init(main_canvas);
 
-        // set the data source
-        var filenames = ["https://storage.googleapis.com/mihir-knn/images/val2017/000000050811.jpg"];
-
         var image_data = [];
 
-        for (var i=0; i<filenames.length; i++) {
+        for (const image of images) {
             var data = new ImageData;
-            data.source_url = filenames[i];
+            data.source_url = image_url_prefix + image;
             image_data.push(data);
         }
 
@@ -194,6 +203,16 @@
         function handle_clear_boxes() {
             labeler.clear_boxes();
         }
+
+        window.addEventListener("keydown", function(e) {
+            e.preventDefault();
+            labeler.handle_keydown(e);
+        });
+
+        window.addEventListener("keyup", function(e) {
+            e.preventDefault();
+            labeler.handle_keyup(e);
+        });
     </script>
 
 </html>

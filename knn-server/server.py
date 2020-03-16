@@ -1,3 +1,4 @@
+import collections
 import heapq
 from multiprocessing import dummy as multiprocessing
 import uuid
@@ -19,7 +20,8 @@ cost = 0
 total_time = 0
 total_gcr_time = 0
 total_compute_time = 0
-num_requests_done = 0
+
+per_worker_num_processed = collections.defaultdict(int)
 
 results = []  # min-heap
 current_id = None
@@ -52,6 +54,7 @@ def toggle():
 
     template = None
     if not running_copy:
+        print(request.get_json())
         if request.get_json():
             for i in range(config.NUM_TEMPLATE_RETRIES):
                 r = requests.post(
@@ -62,7 +65,7 @@ def toggle():
                     template = r.text
                     break
         if not template:
-            return
+            return "Couldn't get template", 400
 
     with state_lock:
         running = not running
@@ -73,6 +76,7 @@ def toggle():
 
     with results_lock:
         results.clear()
+        per_worker_num_processed.clear()
 
         global num_processed
         global num_skipped
@@ -103,6 +107,8 @@ def get_results():
     with results_lock:
         sorted_results = sorted(results)
 
+        per_worker_num_processed_copy = per_worker_num_processed
+
         cost_copy = cost
         num_processed_copy = num_processed
         num_skipped_copy = num_skipped
@@ -131,6 +137,7 @@ def get_results():
             gcr_time=avg_gcr_time,
             compute_time=avg_compute_time,
         ),
+        workers=per_worker_num_processed_copy,
         results=[get_display_string(r) for r in reversed(sorted_results)],
     )
 
@@ -170,13 +177,13 @@ def thread_worker(template, id):
             if id != current_id:
                 break
 
-            timings = chunk_results.pop("elapsed", None)
-            if timings:
+            metadata = chunk_results.pop("metadata", None)
+            if metadata:
                 global cost
 
                 cost += (
-                    0.00002400 * timings["total"]
-                    + 2 * 0.00000250 * timings["total"]
+                    0.00002400 * metadata["total"]
+                    + 2 * 0.00000250 * metadata["total"]
                     + 0.40 / 1000000
                 )
 
@@ -185,8 +192,10 @@ def thread_worker(template, id):
                 global total_compute_time
 
                 total_time += r.elapsed.total_seconds()
-                total_gcr_time += timings["total"]
-                total_compute_time += timings["compute"]
+                total_gcr_time += metadata["total"]
+                total_compute_time += metadata["compute"]
+
+                per_worker_num_processed[metadata["worker_id"]] += 1
 
             global num_processed
             global num_skipped

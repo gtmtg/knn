@@ -5,6 +5,7 @@ import math
 import os
 import pathlib
 import time
+import uuid
 
 from flask import Flask, jsonify, request
 from google.cloud import storage, pubsub
@@ -47,6 +48,7 @@ pixel_mean = torch.Tensor(config.RESNET_CONFIG.MODEL.PIXEL_MEAN).view(1, -1, 1, 
 pixel_std = torch.Tensor(config.RESNET_CONFIG.MODEL.PIXEL_STD).view(1, -1, 1, 1)
 
 # Start web server
+worker_id = uuid.uuid4()
 app = Flask(__name__)
 
 
@@ -58,7 +60,8 @@ def handler():
     template = deserialize(event["template"]).unsqueeze(dim=0)
     results = collections.defaultdict(dict)
 
-    results["elapsed"]["compute"] = 0
+    results["metadata"]["worker_id"] = worker_id
+    results["metadata"]["compute"] = 0
 
     for image_cloud_path in event["images"]:
         try:
@@ -67,7 +70,7 @@ def handler():
             compute_start_time = time.time()
             result = run_inference(image)
             score_map, score = compute_knn_score(result, template)
-            results["elapsed"]["compute"] += time.time() - compute_start_time
+            results["metadata"]["compute"] += time.time() - compute_start_time
 
             results[image_cloud_path]["score"] = score
             if event.get("include_score_map"):
@@ -76,7 +79,7 @@ def handler():
         except AssertionError:
             pass
 
-    results["elapsed"]["total"] = time.time() - start_time
+    results["metadata"]["total"] = time.time() - start_time
 
     return jsonify(results)
 
