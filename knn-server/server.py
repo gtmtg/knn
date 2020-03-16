@@ -54,7 +54,6 @@ def toggle():
 
     template = None
     if not running_copy:
-        print(request.get_json())
         if request.get_json():
             for i in range(config.NUM_TEMPLATE_RETRIES):
                 r = requests.post(
@@ -104,10 +103,15 @@ def toggle():
 
 @app.route("/results")
 def get_results():
+    with state_lock:
+        running_copy = running
+
     with results_lock:
         sorted_results = sorted(results)
 
-        per_worker_num_processed_copy = per_worker_num_processed
+        workers_copy = {
+            i: n for i, (_, n) in enumerate(per_worker_num_processed.items())
+        }
 
         cost_copy = cost
         num_processed_copy = num_processed
@@ -137,21 +141,24 @@ def get_results():
             gcr_time=avg_gcr_time,
             compute_time=avg_compute_time,
         ),
-        workers=per_worker_num_processed_copy,
+        workers=workers_copy,
         results=[get_display_string(r) for r in reversed(sorted_results)],
+        running=running_copy,
     )
 
 
 def image_chunk_gen():
+    global running
     while True:
         images = []
         with state_lock:
             if not running:
-                return
+                break
 
             first_image = image_list.readline().rstrip()
             if not first_image:
-                return
+                running = False
+                break
             images.append(first_image)
 
             for _ in range(config.CHUNK_SIZE - 1):

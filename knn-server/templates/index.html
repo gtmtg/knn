@@ -18,29 +18,33 @@
                     <button id="clear" onclick="handle_clear_boxes()">Clear Boxes</button>
                     <ol id="results"></ol>
                 </div>
-                <div class="col-3" id="stats" style="display: none;">
-                    <b>Performance</b>
-                    <section id="progress">
-                        <div id="text"></div>
-                        <progress id="bar"/>
-                    </section>
+                <div class="col-3">
+                    <div id="stats" style="display: none;">
+                        <b>Performance</b>
+                        <section id="progress">
+                            <div id="text"></div>
+                            <progress id="bar"/>
+                        </section>
 
-                    <section id="dpi">
-                        <div id="text"></div>
-                        <progress id="bar"/>
-                    </section>
+                        <section id="dpi">
+                            <div id="text"></div>
+                            <progress id="bar"/>
+                        </section>
 
-                    <section id="ips">
-                        <div id="text"></div>
-                        <progress id="bar"/>
-                    </section>
+                        <section id="ips">
+                            <div id="text"></div>
+                            <progress id="bar"/>
+                        </section>
 
-                    <section id="dps">
-                        <div id="text"></div>
-                        <progress id="bar"/>
-                    </section>
+                        <section id="dps">
+                            <div id="text"></div>
+                            <progress id="bar"/>
+                        </section>
 
-                    <section id="piechart"></section>
+                        <section id="piechart"></section>
+                    </div>
+                    <div id="workers" style="display: none;">
+                    </div>
                 </div>
             </div>
         </div>
@@ -51,7 +55,7 @@
     <script type="text/javascript" src="{{ url_for('static', filename='kmath.js') }}"></script>
     <script type="text/javascript" src="{{ url_for('static', filename='klabel.js') }}"></script>
     <script type="text/javascript">
-        const server_url = "http://localhost:5000";
+        const server_url = "";
         const poll_interval = 500;  // ms
         const image_url_prefix = "https://storage.googleapis.com/mihir-knn/";
         const images = [
@@ -65,7 +69,8 @@
         let running = false;
         let poll;
 
-        let prev_stats = undefined;
+        let prev_stats = {};
+        let prev_workers = {};
 
         var labeler = new ImageLabeler;
 
@@ -76,21 +81,27 @@
             if (running) {
                 $("#results").empty();
                 $("#stats").show();
+                $("#workers").show();
                 poll = setInterval(
                     () => $.getJSON(server_url + "/results", display_results),
                     poll_interval
                 );
             } else {
-                $("#stats").hide();
-                prev_stats = undefined;
+                prev_stats = {};
+                prev_workers = {};
                 clearInterval(poll);
             }
         };
 
-        const make_derivative = (stats, key, fn) => {
-            stats[key] = 1000 * (fn(stats) - fn(prev_stats)) / (stats.ts - prev_stats.ts);
-            if (prev_stats[key]) {
-                stats[key] = (prev_stats[key] + stats[key]) / 2;
+        const fixed = (x, n) => {
+            const p = Math.pow(10, n);
+            return Math.trunc(x * p) / p;
+        };
+
+        const make_derivative = (cur, prev, key, fn) => {
+            cur[key] = 1000 * (fn(cur) - fn(prev)) / (cur.ts - prev.ts);
+            if (key in prev) {
+                cur[key] = (prev[key] + cur[key]) / 2;
             }
         }
 
@@ -98,24 +109,24 @@
 
         const update_stats = (stats) => {
             stats.ts = (new Date()).getTime();
-            if (prev_stats) {
+            if (!$.isEmptyObject(prev_stats)) {
                 // Progress
-                $("#stats #progress #text").html(`Processed ${stats.num_processed}, skipped ${stats.num_skipped} of ${stats.num_total} for $${stats.cost === 0 ? 0 : stats.cost.toFixed(10)}`);
+                $("#stats #progress #text").html(`Processed ${stats.num_processed}, skipped ${stats.num_skipped} of ${stats.num_total} for $${fixed(stats.cost, 10)}`);
                 $("#stats #progress #bar").attr({value: stats.num_processed + stats.num_skipped, max: stats.num_total});
 
                 // $/image
                 let dpi = stats.num_processed === 0 ? 0 : (stats.cost / stats.num_processed);
-                $("#stats #dpi #text").html(`$${dpi === 0 ? 0 : dpi.toFixed(10)}/image`);
+                $("#stats #dpi #text").html(`$${fixed(dpi, 10)}/image`);
                 $("#stats #dpi #bar").attr({value: dpi, max: 0.0002});
 
                 // Images/second
-                make_derivative(stats, 'ips', (s) => s.num_processed);
-                $("#stats #ips #text").html(`${stats.ips === 0 ? 0 : stats.ips.toFixed(4)} images/second`);
+                make_derivative(stats, prev_stats, 'ips', (s) => s.num_processed);
+                $("#stats #ips #text").html(`${fixed(stats.ips, 4)} images/s`);
                 $("#stats #ips #bar").attr({value: stats.ips, max: 50});
 
                 // $/second
-                make_derivative(stats, 'dps', (s) => s.cost);
-                $("#stats #dps #text").html(`$${stats.dps === 0 ? 0 : stats.dps.toFixed(10)}/second`);
+                make_derivative(stats, prev_stats, 'dps', (s) => s.cost);
+                $("#stats #dps #text").html(`$${fixed(stats.dps, 10)}/s`);
                 $("#stats #dps #bar").attr({value: stats.dps, max: 0.002});
 
                 // time breakdown
@@ -138,15 +149,37 @@
             prev_stats = stats;
         }
 
+        const update_workers = (workers) => {
+            let raw_workers = {...workers};
+            workers.ts = (new Date()).getTime();
+
+            let html = '<b>Workers:</b>';
+            for (const worker in raw_workers) {
+                console.log(worker)
+                if (worker in prev_workers) {
+                    make_derivative(workers, prev_workers, worker + '_ips', (w) => w[worker]);
+                } else {
+                    workers[worker + '_ips'] = raw_workers[worker];
+                }
+                worker_ips = workers[worker + '_ips'];
+                html += `<section><div>W${worker}: ${fixed(worker_ips, 4)} images/s</div><progress value="${worker_ips}" max="2"/></section>`;
+            }
+            $("#workers").html(html);
+
+            prev_workers = workers;
+        }
 
         const display_results = (data) => {
-            if (running) {
+            if (running && data.running) {
                 let result_html = "";
                 for (const result of data.results) {
                     result_html += `<li>${result}</li>`;
                 }
                 $("#results").html(result_html);
                 update_stats(data.stats);
+                update_workers(data.workers);
+            } else {
+                set_running({running: false});
             }
         }
 
@@ -156,7 +189,6 @@
             if (annotations.length === 1) {
                 let bbox = annotations[0].bbox;
                 let source_image = labeler.get_current_frame().source_image;
-                console.log(source_image)
                 let patch = [
                     source_image.naturalWidth  * bbox.bmin.x, // x1
                     source_image.naturalHeight * bbox.bmin.y, // y1
@@ -167,7 +199,6 @@
                     image: images[labeler.get_current_frame_num()],
                     patch
                 };
-                console.log(payload)
             }
 
             $("#toggle").html("...");
