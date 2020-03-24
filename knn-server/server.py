@@ -1,7 +1,11 @@
 import collections
+from dataclasses import dataclass
 import heapq
-from multiprocessing import dummy as multiprocessing
+from multiprocessing.dummy import Pool as ThreadPool
+import threading
 import uuid
+
+from typing import Optional, Iterator, List, Dict, Any
 
 from flask import Flask, jsonify, render_template, request
 import requests
@@ -9,25 +13,163 @@ import requests
 import config
 
 
-running = False
-image_list = open(config.IMAGE_LIST_PATH, "r")
-state_lock = multiprocessing.Lock()
+class DatasetIterator:
+    def __init__(self, file_list_path: str, chunk_size: str) -> None:
+        self.file_list = open(file_list_path, "r")
+        self.n_total = 0
+        for line in self.file_list:
+            if not line.strip():
+                break
+            self.n_total += 1
+        self.file_list.seek(0)
 
-num_processed = 0
-num_skipped = 0
-cost = 0
+        self.lock = threading.RLock()
+        self.chunk_size = chunk_size
 
-total_time = 0
-total_gcr_time = 0
-total_compute_time = 0
+    def __iter__(self) -> Iterator[List[str]]:
+        return self
 
-per_worker_num_processed = collections.defaultdict(int)
+    def __next__(self) -> List[str]:
+        with self.lock:
+            first_file = self.file_list.readline().strip()
+            if not first_file:
+                raise StopIteration
 
-results = []  # min-heap
-current_id = None
-results_lock = multiprocessing.Lock()
+            files = [first_file]
+            while len(files) < self.chunk_size:
+                next_file = self.file_list.readline().strip()
+                if next_file:
+                    files.append(next_file)
+                else:
+                    break
+            return files
 
-pool = multiprocessing.Pool(processes=config.MAX_CONCURRENT_REQUESTS)
+
+@dataclass(order=True)
+class ImageResult:
+    score: float
+    image_name: str
+    score_map: Optional[str] = None
+
+    def make_html(self) -> str:
+        html = f"""
+{self.image_name} {self.score}
+<br>
+<img src="{config.IMAGE_URL_FORMAT.format(self.image_name)}" style="width: 250px;"/>"""
+        if self.score_map:
+            html += f'<img src="data:image/jpeg;base64,{self.score_map}" style="width: 250px;"/>'  # noqa
+        return html
+
+
+class ImageQuery:
+    def __init__(
+        self,
+        template: str,
+        include_score_map: bool = True,
+        n_results_to_display: int = config.N_RESULTS_TO_DISPLAY,
+        file_list_path: str = config.IMAGE_LIST_PATH,
+        chunk_size: int = config.CHUNK_SIZE,
+    ) -> None:
+        self.template = template
+        self.include_score_map = include_score_map
+        self.dataset = DatasetIterator(file_list_path, chunk_size)
+
+        self.total_time = 0
+        self.gcr_time = 0
+        self.request_time = 0
+        self.compute_time = 0
+        self.n_requests = 0
+
+        self.n_processed = 0
+        self.n_skipped = 0
+        self.n_chunks_per_worker = collections.defaultdict(int)
+
+        self.results = []
+        self.n_results_to_display = n_results_to_display
+
+        self.lock = threading.RLock()
+
+    def generate_requests(self) -> Iterator[Dict[str, Any]]:
+        for image_chunk in self.dataset:
+            yield {
+                "template": self.template,
+                "images": image_chunk,
+                "include_score_map": self.include_score_map,
+            }
+
+    def update_results(
+        self,
+        chunk_request: Dict[str, Any],
+        chunk_results: Optional[Dict[str, Any]],
+        elapsed_time: float,
+    ) -> None:
+        with self.lock:
+            self.n_requests += 1
+
+            if not chunk_results:
+                self.n_skipped += len(chunk_request["images"])
+                return
+
+            self.total_time += elapsed_time
+            self.gcr_time += chunk_results["gcr_time"]
+            self.request_time += chunk_results["request_time"]
+            self.compute_time += chunk_results["compute_time"]
+
+            self.n_processed += len(chunk_results["images"])
+            self.n_skipped += len(chunk_request["images"]) - len(
+                chunk_results["images"]
+            )
+            self.n_chunks_per_worker[chunk_results["worker_id"]] += 1
+
+            for image_name, result_dict in chunk_results["images"].items():
+                result = ImageResult(
+                    image_name=image_name,
+                    score=result_dict["score"],
+                    score_map=result_dict.get("score_map"),
+                )
+                if len(self.results) < self.n_results_to_display:
+                    heapq.heappush(self.results, result)
+                elif result > self.results[0]:
+                    heapq.heapreplace(self.results, result)
+
+    def get_results_dict(self) -> Dict[str, Any]:
+        with self.lock:
+
+            def amortize(total: float) -> float:
+                return total / self.n_processed if self.n_processed else 0
+
+            return {
+                "stats": {
+                    "cost": self.cost,
+                    "n_processed": self.n_processed,
+                    "n_skipped": self.n_skipped,
+                    "n_total": self.dataset.n_total,
+                    "total_time": amortize(self.total_time),
+                    "gcr_time": amortize(self.gcr_time),
+                    "request_time": amortize(self.request_time),
+                    "compute_time": amortize(self.compute_time),
+                },
+                "workers": dict(enumerate(self.n_chunks_per_worker.values())),
+                "results": [r.make_html() for r in reversed(sorted(self.results))],
+            }
+
+    @property
+    def cost(self) -> float:
+        with self.lock:
+            return (
+                0.00002400 * self.gcr_time
+                + 2 * 0.00000250 * self.gcr_time
+                + 0.40 / 1000000 * self.n_requests
+            )
+
+    @property
+    def finished(self) -> bool:
+        with self.lock:
+            return self.n_processed + self.n_skipped >= self.dataset.n_total
+
+
+current_queries = {}  # type: Dict[str, ImageQuery]
+pool = ThreadPool(processes=config.MAX_CONCURRENT_REQUESTS)
 
 
 # Start web server
@@ -41,19 +183,16 @@ def homepage():
 
 @app.route("/running")
 def get_running():
-    with state_lock:
-        running_copy = running
-    return jsonify(running=running_copy)
+    return jsonify(running=bool(current_queries))
 
 
 @app.route("/toggle", methods=["POST"])
 def toggle():
-    global running
-    with state_lock:
-        running_copy = running
-
-    template = None
-    if not running_copy:
+    # TODO(mihirg): Support multiple concurrent queries
+    if current_queries:
+        current_queries.clear()
+    else:
+        template = None
         if request.get_json():
             for i in range(config.NUM_TEMPLATE_RETRIES):
                 r = requests.post(
@@ -66,160 +205,38 @@ def toggle():
         if not template:
             return "Couldn't get template", 400
 
-    with state_lock:
-        running = not running
-        if not running:
-            return jsonify(running=False)
-
-        image_list.seek(0)
-
-    with results_lock:
-        results.clear()
-        per_worker_num_processed.clear()
-
-        global num_processed
-        global num_skipped
-        global cost
-        num_processed = 0
-        num_skipped = 0
-        cost = 0
-
-        global total_time
-        global total_gcr_time
-        global total_compute_time
-        total_time = 0
-        total_gcr_time = 0
-        total_compute_time = 0
-
-        global current_id
-        current_id = uuid.uuid4()
-
-        pool.starmap_async(
-            thread_worker, [(template, current_id)] * config.MAX_CONCURRENT_REQUESTS
-        )
-
-    return jsonify(running=True)
+        query_id = uuid.uuid4()
+        current_queries[query_id] = ImageQuery(template)
+        pool.map_async(thread_worker, [query_id] * config.MAX_CONCURRENT_REQUESTS)
+    return jsonify(running=bool(current_queries))
 
 
 @app.route("/results")
 def get_results():
-    with state_lock:
-        running_copy = running
+    if not current_queries:
+        return "No active query", 400
 
-    with results_lock:
-        sorted_results = sorted(results)
-
-        workers_copy = {
-            i: n for i, (_, n) in enumerate(per_worker_num_processed.items())
-        }
-
-        cost_copy = cost
-        num_processed_copy = num_processed
-        num_skipped_copy = num_skipped
-
-        if num_processed:
-            avg_total_time = total_time / num_processed
-            avg_gcr_time = total_gcr_time / num_processed
-            avg_compute_time = total_compute_time / num_processed
-        else:
-            avg_total_time = 0
-            avg_gcr_time = 0
-            avg_compute_time = 0
-
-    def get_display_string(result_tuple):
-        score, image_name, score_map = result_tuple
-        return f'{image_name} ({score})<br><img src="{config.IMAGE_URL_FORMAT.format(image_name)}" style="width: 250px;"/><img src="data:image/jpeg;base64,{score_map}" style="width: 250px;"/>'  # noqa
-
-    return jsonify(
-        stats=dict(
-            cost=cost_copy,
-            num_processed=num_processed_copy,
-            num_skipped=num_skipped_copy,
-            num_total=config.N_TOTAL_IMAGES,
-            #
-            total_time=avg_total_time,
-            gcr_time=avg_gcr_time,
-            compute_time=avg_compute_time,
-        ),
-        workers=workers_copy,
-        results=[get_display_string(r) for r in reversed(sorted_results)],
-        running=running_copy,
-    )
+    query = next(iter(current_queries.values()))
+    if query.finished:
+        current_queries.clear()
+    return jsonify(**query.get_results_dict(), running=bool(current_queries))
 
 
-def image_chunk_gen():
-    while True:
-        images = []
-        with state_lock:
-            if not running:
-                break
-
-            first_image = image_list.readline().rstrip()
-            if not first_image:
-                break
-            images.append(first_image)
-
-            for _ in range(config.CHUNK_SIZE - 1):
-                next_image = image_list.readline().rstrip()
-                if next_image:
-                    images.append(next_image)
-        yield images
-
-
-def thread_worker(template, id):
-    for image_chunk in image_chunk_gen():
-        j = {"template": template, "images": image_chunk, "include_score_map": True}
+def thread_worker(query_id: str) -> bool:
+    query = current_queries[query_id]
+    for chunk_request in query.generate_requests():
         try:
             r = requests.post(
-                f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=j
+                f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=chunk_request
             )
             r.raise_for_status()
-            chunk_results = r.json()
         except Exception:
-            chunk_results = {}
+            chunk_results = None
+        else:
+            chunk_results = r.json()
 
-        with results_lock:
-            if id != current_id:
-                break
-
-            metadata = chunk_results.pop("metadata", None)
-            if metadata:
-                global cost
-
-                cost += (
-                    0.00002400 * metadata["total"]
-                    + 2 * 0.00000250 * metadata["total"]
-                    + 0.40 / 1000000
-                )
-
-                global total_time
-                global total_gcr_time
-                global total_compute_time
-
-                total_time += r.elapsed.total_seconds()
-                total_gcr_time += metadata["total"]
-                total_compute_time += metadata["compute"]
-
-                per_worker_num_processed[metadata["worker_id"]] += 1
-
-            global num_processed
-            global num_skipped
-
-            num_processed += len(chunk_results)
-            num_skipped += len(image_chunk) - len(chunk_results)
-
-            for image_name, result in chunk_results.items():
-                result_tuple = (result["score"], image_name, result["score_map"])
-                if len(results) < config.N_RESULTS_TO_DISPLAY:
-                    heapq.heappush(results, result_tuple)
-                elif result_tuple > results[0]:
-                    heapq.heapreplace(results, result_tuple)
-
-    with results_lock:
-        finished = num_processed + num_skipped >= config.N_TOTAL_IMAGES
-    if finished:
-        with state_lock:
-            global running
-            running = False
+        if query_id not in current_queries:
+            break
+        query.update_results(chunk_request, chunk_results, r.elapsed.total_seconds())
 
     return True

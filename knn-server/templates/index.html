@@ -20,30 +20,28 @@
                 </div>
                 <div class="col-3">
                     <div id="stats" style="display: none;">
-                        <b>Performance</b>
+                        <b>Performance:</b>
                         <section id="progress">
                             <div id="text"></div>
                             <progress id="bar"/>
                         </section>
 
-                        <section id="dpi">
+                        <section id="cost_per_image">
                             <div id="text"></div>
                             <progress id="bar"/>
                         </section>
 
-                        <section id="ips">
+                        <section id="images_per_second">
                             <div id="text"></div>
                             <progress id="bar"/>
                         </section>
 
-                        <section id="dps">
-                            <div id="text"></div>
-                            <progress id="bar"/>
-                        </section>
-
-                        <section id="piechart"></section>
+                        <section id="time_breakdown"></section>
                     </div>
                     <div id="workers" style="display: none;">
+                        <b>Workers:</b>
+                        <section id="worker_distribution"></section>
+                        <div id="list"></div>
                     </div>
                 </div>
             </div>
@@ -55,195 +53,240 @@
     <script type="text/javascript" src="{{ url_for('static', filename='kmath.js') }}"></script>
     <script type="text/javascript" src="{{ url_for('static', filename='klabel.js') }}"></script>
     <script type="text/javascript">
-        const server_url = "";
-        const poll_interval = 500;  // ms
-        const image_url_prefix = "https://storage.googleapis.com/mihir-knn/";
-        const images = [
-            "images/val2017/000000050811.jpg",
-            "images/val2017/000000230983.jpg",
-            "images/val2017/000000038118.jpg",
-            "images/val2017/000000001584.jpg",
-            "images/val2017/000000213593.jpg",
-        ];
+    // Labeler
+    const image_url_prefix = "https://storage.googleapis.com/mihir-knn/";
+    const images = [
+        "images/val2017/000000050811.jpg",
+        "images/val2017/000000230983.jpg",
+        "images/val2017/000000038118.jpg",
+        "images/val2017/000000001584.jpg",
+        "images/val2017/000000213593.jpg",
+    ];
 
-        let running = false;
-        let poll;
+    var labeler = new ImageLabeler;
 
-        let prev_stats = {};
-        let prev_workers = {};
+    var main_canvas = document.getElementById("main_canvas");
+    labeler.init(main_canvas);
 
-        var labeler = new ImageLabeler;
+    var image_data = [];
 
-        const set_running = (data) => {
-            running = data.running;
-            $("#toggle").html(running ? "Stop" : "Start");
+    for (const image of images) {
+        var data = new ImageData;
+        data.source_url = image_url_prefix + image;
+        image_data.push(data);
+    }
 
-            if (running) {
-                $("#results").empty();
-                $("#stats").show();
-                $("#workers").show();
-                poll = setInterval(
-                    () => $.getJSON(server_url + "/results", display_results),
-                    poll_interval
-                );
+    labeler.load_image_stack(image_data);
+
+    labeler.set_annotation_mode(Annotation.ANNOTATION_MODE_EXTREME_POINTS_BBOX);
+
+    function handle_clear_boxes() {
+        labeler.clear_boxes();
+    }
+
+    window.addEventListener("keydown", function(e) {
+        e.preventDefault();
+        labeler.handle_keydown(e);
+    });
+
+    window.addEventListener("keyup", function(e) {
+        e.preventDefault();
+        labeler.handle_keyup(e);
+    });
+
+    // Running state
+
+    const poll_interval = 500;  // ms
+    let poll;
+
+    let running = false;
+    let prev_stats = {};
+    let prev_workers = {};
+
+    const set_running = (data) => {
+        running = data.running;
+        $("#toggle").html(running ? "Stop" : "Start");
+
+        if (running) {
+            $("#results").empty();
+            $("#stats").show();
+            $("#workers").show();
+
+            // Repeatedly poll for updated results from server
+            poll = setInterval(
+                () => $.getJSON("/results", display_results),
+                poll_interval
+            );
+        } else {
+            prev_stats = {};
+            prev_workers = {};
+            clearInterval(poll);
+        }
+    };
+
+    $(window).on("load", () => {
+        $.get("/running", set_running);
+    });
+
+    $("#toggle").click(() => {
+        let annotations = labeler.get_annotations()[labeler.get_current_frame_num()].annotations;
+        let payload = {};
+        if (annotations.length === 1) {
+            let bbox = annotations[0].bbox;
+            let source_image = labeler.get_current_frame().source_image;
+            let patch = [
+                source_image.naturalWidth  * bbox.bmin.x, // x1
+                source_image.naturalHeight * bbox.bmin.y, // y1
+                source_image.naturalWidth  * bbox.bmax.x, // x2
+                source_image.naturalHeight * bbox.bmax.y, // y2
+            ];
+            payload = {
+                image: images[labeler.get_current_frame_num()],
+                patch,
+            };
+        }
+
+        $("#toggle").html("...");
+        $.ajax({
+            url: "/toggle",
+            type: "POST",
+            data: JSON.stringify(payload),
+            contentType: "application/json",
+            success: set_running,
+            error: () => $("#toggle").html(running ? "Stop" : "Start"),
+        });
+    });
+
+    // Results
+
+    const display_results = (data) => {
+        if (!running) return;
+
+        let result_html = "";
+        for (const result of data.results) {
+            result_html += `<li>${result}</li>`;
+        }
+        $("#results").html(result_html);
+
+        update_performance_stats(data.stats);
+        update_worker_info(data.workers);
+
+        if (!data.running) set_running({running: false});  // stop when query is complete
+    };
+
+    // Performance analytics
+
+    google.charts.load("current", {"packages":["corechart"]});
+
+    const update_performance_stats = (stats) => {
+        stats.ts = (new Date()).getTime();
+
+        if (!$.isEmptyObject(prev_stats)) {
+            // Progress
+            update_stat("progress",
+                        `Processed ${stats.n_processed}, skipped ${stats.n_skipped} of ${stats.n_total} for $${to_fixed(stats.cost, 2)}`,
+                        stats.n_processed + stats.n_skipped,
+                        stats.n_total);
+
+            // Cost per image
+            let cost_per_1k_images = stats.n_processed === 0 ? 0 : (1000 * stats.cost / stats.n_processed);
+            update_stat("cost_per_image",
+                        `$${to_fixed(cost_per_1k_images, 2)}/1k images`,
+                        cost_per_1k_images,
+                        0.2);
+
+            // Images per second
+            make_derivative(stats, prev_stats, "images_per_second", (s) => s.n_processed);
+            update_stat("images_per_second",
+                        `${Math.round(stats.images_per_second)} images/s`,
+                        stats.images_per_second,
+                        50);
+
+            // Time breakdown pie chart
+            let data = google.visualization.arrayToDataTable([
+                ["", ""],
+                ["Cloud Run Overhead (s)", stats.total_time - stats.gcr_time],
+                ["Model Loading (s)",      stats.gcr_time - stats.request_time],
+                ["I/O (s)",                stats.request_time - stats.compute_time],
+                ["Compute (s)",            stats.compute_time],
+            ]);
+            let options = {
+              title: "Average Request Breakdown",
+              legend: "none"
+            };
+            let chart = new google.visualization.PieChart(document.getElementById("time_breakdown"));
+            chart.draw(data, options);
+        }
+
+        prev_stats = stats;
+    };
+
+    const update_worker_info = (workers) => {
+        // # of chunks per worker histogram
+        let data_array = [[""]];
+        for (const n_chunks of Object.values(workers)) {
+            data_array.push([n_chunks]);
+        }
+        let data = google.visualization.arrayToDataTable(data_array);
+        let options = {
+          title: "Chunks Per Worker",
+          legend: "none",
+          histogram: { hideBucketItems: true, },
+        };
+        let chart = new google.visualization.Histogram(document.getElementById("worker_distribution"));
+        chart.draw(data, options);
+
+        /*
+        // NOTE: The stats below are no longer accurate because the server now returns
+        // the number of *chunks* per worker, not the number of processed images -- just
+        // leaving the code here in case it might be useful in the future.
+
+        // Per-worker images per second
+        // TODO(mihirg): Figure out a way to make this more informative
+        let worker_list = Object.keys(workers);
+        workers.ts = (new Date()).getTime();
+
+        let html = "";
+        for (const worker of worker_list) {
+            if (worker in prev_workers) {
+                make_derivative(workers, prev_workers, `${worker}_rate`, (w) => w[worker]);
             } else {
-                prev_stats = {};
-                prev_workers = {};
-                clearInterval(poll);
-            }
-        };
-
-        const fixed = (x, n) => {
-            const p = Math.pow(10, n);
-            return Math.trunc(x * p) / p;
-        };
-
-        const make_derivative = (cur, prev, key, fn) => {
-            cur[key] = 1000 * (fn(cur) - fn(prev)) / (cur.ts - prev.ts);
-            if (key in prev) {
-                cur[key] = (prev[key] + cur[key]) / 2;
-            }
-        }
-
-        google.charts.load('current', {'packages':['corechart']});
-
-        const update_stats = (stats) => {
-            stats.ts = (new Date()).getTime();
-            if (!$.isEmptyObject(prev_stats)) {
-                // Progress
-                $("#stats #progress #text").html(`Processed ${stats.num_processed}, skipped ${stats.num_skipped} of ${stats.num_total} for $${fixed(stats.cost, 10)}`);
-                $("#stats #progress #bar").attr({value: stats.num_processed + stats.num_skipped, max: stats.num_total});
-
-                // $/image
-                let dpi = stats.num_processed === 0 ? 0 : (stats.cost / stats.num_processed);
-                $("#stats #dpi #text").html(`$${fixed(dpi, 10)}/image`);
-                $("#stats #dpi #bar").attr({value: dpi, max: 0.0002});
-
-                // Images/second
-                make_derivative(stats, prev_stats, 'ips', (s) => s.num_processed);
-                $("#stats #ips #text").html(`${fixed(stats.ips, 4)} images/s`);
-                $("#stats #ips #bar").attr({value: stats.ips, max: 50});
-
-                // $/second
-                make_derivative(stats, prev_stats, 'dps', (s) => s.cost);
-                $("#stats #dps #text").html(`$${fixed(stats.dps, 10)}/s`);
-                $("#stats #dps #bar").attr({value: stats.dps, max: 0.002});
-
-                // time breakdown
-                var data = google.visualization.arrayToDataTable([
-                    ['', ''],
-                    ['Cloud Run Overhead (s)', stats.total_time - stats.gcr_time],
-                    ['I/O (s)',      stats.gcr_time - stats.compute_time],
-                    ['Compute (s)',  stats.compute_time],
-                ]);
-
-                var options = {
-                  title: 'Average Request Breakdown',
-                  legend: 'none'
-                };
-
-                var chart = new google.visualization.PieChart(document.getElementById('piechart'));
-
-                chart.draw(data, options);
-            }
-            prev_stats = stats;
-        }
-
-        const update_workers = (workers) => {
-            let raw_workers = {...workers};
-            workers.ts = (new Date()).getTime();
-
-            let html = '<b>Workers:</b>';
-            for (const worker in raw_workers) {
-                console.log(worker)
-                if (worker in prev_workers) {
-                    make_derivative(workers, prev_workers, worker + '_ips', (w) => w[worker]);
-                } else {
-                    workers[worker + '_ips'] = raw_workers[worker];
-                }
-                worker_ips = workers[worker + '_ips'];
-                html += `<section><div>W${worker}: ${fixed(worker_ips, 4)} images/s</div><progress value="${worker_ips}" max="2"/></section>`;
-            }
-            $("#workers").html(html);
-
-            prev_workers = workers;
-        }
-
-        const display_results = (data) => {
-            if (running) {
-                let result_html = "";
-                for (const result of data.results) {
-                    result_html += `<li>${result}</li>`;
-                }
-                $("#results").html(result_html);
-                update_stats(data.stats);
-                update_workers(data.workers);
-
-                if (!data.running) set_running({running: false});
-            }
-        }
-
-        $("#toggle").click(() => {
-            let annotations = labeler.get_annotations()[labeler.get_current_frame_num()].annotations;
-            let payload = {};
-            if (annotations.length === 1) {
-                let bbox = annotations[0].bbox;
-                let source_image = labeler.get_current_frame().source_image;
-                let patch = [
-                    source_image.naturalWidth  * bbox.bmin.x, // x1
-                    source_image.naturalHeight * bbox.bmin.y, // y1
-                    source_image.naturalWidth  * bbox.bmax.x, // x2
-                    source_image.naturalHeight * bbox.bmax.y  // y2
-                ];
-                payload = {
-                    image: images[labeler.get_current_frame_num()],
-                    patch
-                };
+                workers[`${worker}_rate`] = workers[worker];
             }
 
-            $("#toggle").html("...");
-            $.ajax({
-                url: server_url + "/toggle",
-                type: "POST",
-                data: JSON.stringify(payload),
-                contentType: "application/json",
-                success: set_running,
-                error: () => $("#toggle").html(running ? "Stop" : "Start"),
-            });
-        });
-
-        $(window).on('load', () => {
-            $.get(server_url + "/running", set_running);
-        });
-
-        var main_canvas = document.getElementById('main_canvas');
-        labeler.init(main_canvas);
-
-        var image_data = [];
-
-        for (const image of images) {
-            var data = new ImageData;
-            data.source_url = image_url_prefix + image;
-            image_data.push(data);
+            let worker_rate = workers[`${worker}_rate`];
+            html += `<section><div>W${worker}: ${to_fixed(worker_rate, 3)} images/s</div><progress value="${worker_rate}" max="2"/></section>`;
         }
+        $("#workers #list").html(html);
 
-        labeler.load_image_stack(image_data);
+        prev_workers = workers;
+        */
+    };
 
-        labeler.set_annotation_mode(Annotation.ANNOTATION_MODE_EXTREME_POINTS_BBOX);
+    // Helper functions
 
-        function handle_clear_boxes() {
-            labeler.clear_boxes();
+    const to_fixed = (x, n) => {
+        const p = Math.pow(10, n);
+        return Math.trunc(x * p) / p;
+    };
+
+    // TODO(mihirg): Make this less hacky, potentially move to server?
+    // TODO(mihirg): Consider displaying average rates as well, not just instantaneous
+    const make_derivative = (cur, prev, key, fn) => {
+        // Take derivative
+        cur[key] = (fn(cur) - fn(prev)) *        /* difference */
+                   (1000 / (cur.ts - prev.ts));  /* 1 / dt (in seconds) */
+
+        // Smooth with exponential moving average
+        if (key in prev) {
+            cur[key] = (prev[key] + cur[key]) / 2;
         }
+    };
 
-        window.addEventListener("keydown", function(e) {
-            e.preventDefault();
-            labeler.handle_keydown(e);
-        });
-
-        window.addEventListener("keyup", function(e) {
-            e.preventDefault();
-            labeler.handle_keyup(e);
-        });
+    const update_stat = (name, text, value, max) => {
+        $(`#stats #${name} #text`).html(text);
+        $(`#stats #${name} #bar`).attr({value, max});
+    };
     </script>
 
 </html>
