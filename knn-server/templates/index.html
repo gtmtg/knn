@@ -283,7 +283,6 @@
     };
 
     // TODO(mihirg): Make this less hacky, potentially move to server?
-    // TODO(mihirg): Consider displaying average rates as well, not just instantaneous
     const make_derivative = (cur, prev, key, fn) => {
         // Take derivative
         cur[key] = (fn(cur) - fn(prev)) *        /* difference */
