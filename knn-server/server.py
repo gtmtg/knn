@@ -1,8 +1,9 @@
 import collections
 from dataclasses import dataclass
 import heapq
-from multiprocessing.dummy import Pool as ThreadPool
+from multiprocessing.pool import ThreadPool
 import threading
+import time
 import uuid
 
 from typing import Optional, Iterator, List, Dict, Any
@@ -89,6 +90,8 @@ class ImageQuery:
 
         self.lock = threading.RLock()
 
+        self.start_time = time.time()
+
     def generate_requests(self) -> Iterator[Dict[str, Any]]:
         for image_chunk in self.dataset:
             yield {
@@ -144,6 +147,7 @@ class ImageQuery:
                     "n_processed": self.n_processed,
                     "n_skipped": self.n_skipped,
                     "n_total": self.dataset.n_total,
+                    "elapsed_time": time.time() - self.start_time,
                     "total_time": amortize(self.total_time),
                     "gcr_time": amortize(self.gcr_time),
                     "request_time": amortize(self.request_time),

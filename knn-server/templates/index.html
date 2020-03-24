@@ -31,6 +31,11 @@
                             <progress id="bar"/>
                         </section>
 
+                        <section id="images_per_second_avg">
+                            <div id="text"></div>
+                            <progress id="bar"/>
+                        </section>
+
                         <section id="images_per_second">
                             <div id="text"></div>
                             <progress id="bar"/>
@@ -195,10 +200,17 @@
                         cost_per_1k_images,
                         0.2);
 
+            // Images per second (average)
+            let images_per_second_avg = stats.n_processed / stats.elapsed_time;
+            update_stat("images_per_second_avg",
+                        `${Math.round(images_per_second_avg)} images/s (average)`,
+                        images_per_second_avg,
+                        50);
+
             // Images per second
             make_derivative(stats, prev_stats, "images_per_second", (s) => s.n_processed);
             update_stat("images_per_second",
-                        `${Math.round(stats.images_per_second)} images/s`,
+                        `${Math.round(stats.images_per_second)} images/s (right now)`,
                         stats.images_per_second,
                         50);
 
