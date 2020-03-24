@@ -225,15 +225,10 @@ def get_results():
 def thread_worker(query_id: str) -> bool:
     query = current_queries[query_id]
     for chunk_request in query.generate_requests():
-        try:
-            r = requests.post(
-                f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=chunk_request
-            )
-            r.raise_for_status()
-        except Exception:
-            chunk_results = None
-        else:
-            chunk_results = r.json()
+        r = requests.post(
+            f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=chunk_request
+        )
+        chunk_results = r.json() if r.status_code == 200 else None
 
         if query_id not in current_queries:
             break
