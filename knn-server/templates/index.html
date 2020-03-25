@@ -16,7 +16,7 @@
                     <br>
                     <button id="toggle"></button>
                     <button id="clear" onclick="handle_clear_boxes()">Clear Boxes</button>
-                    <ol id="results"></ol>
+                    <div id="results"></div>
                 </div>
                 <div class="col-3">
                     <div id="stats" style="display: none;">
@@ -106,7 +106,7 @@
 
     // Running state
 
-    const poll_interval = 500;  // ms
+    const poll_interval = 1000;  // ms
     let poll;
 
     let running = false;
@@ -178,12 +178,22 @@
 
     // Results
 
+    
     const display_results = (data) => {
         if (!running) return;
 
+        console.log(data);
+
         let result_html = "";
+        let rank = 1;
         for (const result of data.results) {
-            result_html += `<li>${result}</li>`;
+            result_html += `<div>`;
+            result_html += '<div>'
+            result_html += `(${rank}) ${result['image_name']}, score=${to_fixed(Number.parseFloat(result['score']), 6)}`;
+            result_html += `<div><img src="${result['image_url']}" width="250" /><img src="${result['score_map_url']}" width="250" /></div>`;
+            result_html += `</div>`;
+            result_html += `</div>`;
+            rank++;
         }
         $("#results").html(result_html);
 
@@ -210,23 +220,23 @@
             // Images per second (overall)
             let images_per_second_avg = stats.n_processed / stats.elapsed_time;
             update_stat("images_per_second_avg",
-                        `${Math.round(images_per_second_avg)} img/sec (overall)`,
+                        `${to_fixed(images_per_second_avg, 1)} img/sec (overall)`,
                         images_per_second_avg,
                         50);
 
             // Images per second (recent)
             make_derivative(stats, prev_stats, "images_per_second", (s) => s.n_processed);
             update_stat("images_per_second",
-                        `${Math.round(stats.images_per_second)} img/sec (recent)`,
+                        `${to_fixed(stats.images_per_second, 1)} img/sec (recent)`,
                         stats.images_per_second,
                         50);
 
             // total cost of computation
             update_stat_no_bar("total_cost", `Overall cost: $${to_fixed(stats.cost, 2)}`);
 
-            // Cost per image
+            // Cost per (successfully processed) image
             let cost_per_1k_images = stats.n_processed === 0 ? 0 : (1000 * stats.cost / stats.n_processed);
-            update_stat_no_bar("cost_per_image", `Cost per 1K images: $${to_fixed(cost_per_1k_images, 2)}`);
+            update_stat_no_bar("cost_per_image", `Cost per 1K images: $${to_fixed(cost_per_1k_images, 4)}`);
 
             // Time breakdown pie chart
             let data = google.visualization.arrayToDataTable([
@@ -292,8 +302,7 @@
     // Helper functions
 
     const to_fixed = (x, n) => {
-        const p = Math.pow(10, n);
-        return Math.trunc(x * p) / p;
+        return x.toFixed(n);
     };
 
     // TODO(mihirg): Make this less hacky, potentially move to server?
