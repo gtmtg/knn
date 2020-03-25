@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 
-from typing import Optional, Iterator, List, Dict, Any
+from typing import Optional, Iterator, List, Dict, Any, Union
 
 from flask import Flask, jsonify, render_template, request
 import requests
@@ -52,14 +52,15 @@ class ImageResult:
     image_name: str
     score_map: Optional[str] = None
 
-    def make_html(self) -> str:
-        html = f"""
-{self.image_name} {self.score}
-<br>
-<img src="{config.IMAGE_URL_FORMAT.format(self.image_name)}" style="width: 250px;"/>"""
+    def make_result_dict(self) -> Dict[str, Union[str, float]]:
+        result = {
+            "image_name": self.image_name,
+            "image_url": config.IMAGE_URL_FORMAT.format(self.image_name),
+            "score": self.score,
+        }
         if self.score_map:
-            html += f'<img src="data:image/jpeg;base64,{self.score_map}" style="width: 250px;"/>'  # noqa
-        return html
+            result["score_map_url"] = f"data:image/jpeg;base64,{self.score_map}"
+        return result
 
 
 class ImageQuery:
@@ -154,7 +155,9 @@ class ImageQuery:
                     "compute_time": amortize(self.compute_time),
                 },
                 "workers": dict(enumerate(self.n_chunks_per_worker.values())),
-                "results": [r.make_html() for r in reversed(sorted(self.results))],
+                "results": [
+                    r.make_result_dict() for r in reversed(sorted(self.results))
+                ],
             }
 
     @property
