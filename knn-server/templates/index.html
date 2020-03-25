@@ -20,7 +20,13 @@
                 </div>
                 <div class="col-3">
                     <div id="stats" style="display: none;">
-                        <b>Performance:</b>
+                        <b>Throughput:</b>
+                        <hr size="1" style="color: d0d0d0;" />
+
+                        <section id="elapsed_time">
+                            <div id="text"></div>
+                        </section>
+
                         <section id="progress">
                             <div id="text"></div>
                             <progress id="bar"/>
@@ -37,6 +43,7 @@
                         </section>
 
                         <b>Cost:</b>
+                        <hr size="1" style="color: d0d0d0;" />
 
                         <section id="total_cost">
                             <div id="text"></div>
@@ -46,8 +53,12 @@
                             <div id="text"></div>
                         </section>
 
+                        <b>Perf Analysis:</b>
+                        <hr size="1" style="color: d0d0d0;" />
+
                         <section id="time_breakdown"></section>
                     </div>
+                    
                     <div id="workers" style="display: none;">
                         <b>Workers:</b>
                         <section id="worker_distribution"></section>
@@ -185,16 +196,22 @@
         console.log(data);
 
         let result_html = "";
-        let rank = 1;
-        for (const result of data.results) {
-            result_html += `<div>`;
-            result_html += '<div>'
-            result_html += `(${rank}) ${result['image_name']}, score=${to_fixed(Number.parseFloat(result['score']), 6)}`;
-            result_html += `<div><img src="${result['image_url']}" width="250" /><img src="${result['score_map_url']}" width="250" /></div>`;
-            result_html += `</div>`;
-            result_html += `</div>`;
-            rank++;
+
+        if (data.results.length > 0) {
+            let rank = 1;
+            for (const result of data.results) {
+                result_html += `<div>`;
+                result_html += '<div>'
+                result_html += `(${rank}) ${result['image_name']}, score=${to_fixed(Number.parseFloat(result['score']), 6)}`;
+                result_html += `<div><img src="${result['image_url']}" width="250" /><img src="${result['score_map_url']}" width="250" /></div>`;
+                result_html += `</div>`;
+                result_html += `</div>`;
+                rank++;
+            }
+        } else {
+            result_html += '<div>No results have come back yet.</div>';
         }
+
         $("#results").html(result_html);
 
         update_performance_stats(data.stats);
@@ -211,9 +228,13 @@
         stats.ts = (new Date()).getTime();
 
         if (!$.isEmptyObject(prev_stats)) {
+
+            // total cost of computation
+            update_stat_no_bar("elapsed_time", `Elapsed time: ${to_fixed(stats.elapsed_time, 0)} sec`);
+
             // Progress
             update_stat("progress",
-                        `Processed ${stats.n_processed + stats.n_skipped} of ${stats.n_total} (skipped ${stats.n_skipped})`,
+                        `Processed ${stats.n_processed + stats.n_skipped} of ${stats.n_total} <br /> (skipped ${stats.n_skipped})`,
                         stats.n_processed + stats.n_skipped,
                         stats.n_total);
 
