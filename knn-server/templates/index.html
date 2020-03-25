@@ -26,11 +26,6 @@
                             <progress id="bar"/>
                         </section>
 
-                        <section id="cost_per_image">
-                            <div id="text"></div>
-                            <progress id="bar"/>
-                        </section>
-
                         <section id="images_per_second_avg">
                             <div id="text"></div>
                             <progress id="bar"/>
@@ -39,6 +34,16 @@
                         <section id="images_per_second">
                             <div id="text"></div>
                             <progress id="bar"/>
+                        </section>
+
+                        <b>Cost:</b>
+
+                        <section id="total_cost">
+                            <div id="text"></div>
+                        </section>
+
+                        <section id="cost_per_image">
+                            <div id="text"></div>
                         </section>
 
                         <section id="time_breakdown"></section>
@@ -134,12 +139,17 @@
     });
 
     $("#toggle").click(() => {
+
+        // grab the bounding box from the labeler and perform KNN search with this patch as the query
+
         let annotations = labeler.get_annotations()[labeler.get_current_frame_num()].annotations;
         let payload = {};
         if (annotations.length === 1) {
             let bbox = annotations[0].bbox;
             let source_image = labeler.get_current_frame().source_image;
             let patch = [
+                // coordinates from klabel are in normalized [0,1]^2 space,
+                // so convert to a pixel-space bounding box.
                 source_image.naturalWidth  * bbox.bmin.x, // x1
                 source_image.naturalHeight * bbox.bmin.y, // y1
                 source_image.naturalWidth  * bbox.bmax.x, // x2
@@ -149,17 +159,21 @@
                 image: images[labeler.get_current_frame_num()],
                 patch,
             };
-        }
 
-        $("#toggle").html("...");
-        $.ajax({
-            url: "/toggle",
-            type: "POST",
-            data: JSON.stringify(payload),
-            contentType: "application/json",
-            success: set_running,
-            error: () => $("#toggle").html(running ? "Stop" : "Start"),
-        });
+            $("#toggle").html("...");
+            $.ajax({
+                url: "/toggle",
+                type: "POST",
+                data: JSON.stringify(payload),
+                contentType: "application/json",
+                success: set_running,
+                error: () => $("#toggle").html(running ? "Stop" : "Start"),
+            });
+
+        } else {
+            if (!running)
+                alert('Please draw exactly one box to define a query patch.');
+        }
     });
 
     // Results
@@ -189,30 +203,30 @@
         if (!$.isEmptyObject(prev_stats)) {
             // Progress
             update_stat("progress",
-                        `Processed ${stats.n_processed}, skipped ${stats.n_skipped} of ${stats.n_total} for $${to_fixed(stats.cost, 2)}`,
+                        `Processed ${stats.n_processed + stats.n_skipped} of ${stats.n_total} (skipped ${stats.n_skipped})`,
                         stats.n_processed + stats.n_skipped,
                         stats.n_total);
 
-            // Cost per image
-            let cost_per_1k_images = stats.n_processed === 0 ? 0 : (1000 * stats.cost / stats.n_processed);
-            update_stat("cost_per_image",
-                        `$${to_fixed(cost_per_1k_images, 2)}/1k images`,
-                        cost_per_1k_images,
-                        0.2);
-
-            // Images per second (average)
+            // Images per second (overall)
             let images_per_second_avg = stats.n_processed / stats.elapsed_time;
             update_stat("images_per_second_avg",
-                        `${Math.round(images_per_second_avg)} images/s (average)`,
+                        `${Math.round(images_per_second_avg)} img/sec (overall)`,
                         images_per_second_avg,
                         50);
 
-            // Images per second
+            // Images per second (recent)
             make_derivative(stats, prev_stats, "images_per_second", (s) => s.n_processed);
             update_stat("images_per_second",
-                        `${Math.round(stats.images_per_second)} images/s (right now)`,
+                        `${Math.round(stats.images_per_second)} img/sec (recent)`,
                         stats.images_per_second,
                         50);
+
+            // total cost of computation
+            update_stat_no_bar("total_cost", `Overall cost: $${to_fixed(stats.cost, 2)}`);
+
+            // Cost per image
+            let cost_per_1k_images = stats.n_processed === 0 ? 0 : (1000 * stats.cost / stats.n_processed);
+            update_stat_no_bar("cost_per_image", `Cost per 1K images: $${to_fixed(cost_per_1k_images, 2)}`);
 
             // Time breakdown pie chart
             let data = google.visualization.arrayToDataTable([
@@ -298,6 +312,11 @@
         $(`#stats #${name} #text`).html(text);
         $(`#stats #${name} #bar`).attr({value, max});
     };
+
+    const update_stat_no_bar = (name, text) => {
+        $(`#stats #${name} #text`).html(text);
+    };
+
     </script>
 
 </html>
