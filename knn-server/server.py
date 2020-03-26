@@ -67,6 +67,7 @@ class ImageQuery:
     def __init__(
         self,
         template: str,
+        n_concurrent_workers: int,
         include_score_map: bool = True,
         n_results_to_display: int = config.N_RESULTS_TO_DISPLAY,
         file_list_path: str = config.IMAGE_LIST_PATH,
@@ -90,8 +91,13 @@ class ImageQuery:
         self.n_results_to_display = n_results_to_display
 
         self.lock = threading.RLock()
+        self.pool = ThreadPool(processes=n_concurrent_workers)
 
         self.start_time = time.time()
+
+    def __del__(self) -> None:
+        self.pool.close()
+        self.pool.join()
 
     def generate_requests(self) -> Iterator[Dict[str, Any]]:
         for image_chunk in self.dataset:
@@ -176,7 +182,7 @@ class ImageQuery:
 
 
 current_queries = {}  # type: Dict[str, ImageQuery]
-pool = ThreadPool(processes=config.MAX_CONCURRENT_REQUESTS)
+n_concurrent_workers = config.N_CONCURRENT_WORKERS_RANGE[1]  # default
 
 
 # Start web server
@@ -185,7 +191,11 @@ app = Flask(__name__)
 
 @app.route("/")
 def homepage():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        n_concurrent_workers=n_concurrent_workers,
+        running=bool(current_queries),
+    )
 
 
 @app.route("/running")
@@ -195,38 +205,50 @@ def get_running():
 
 @app.route("/toggle", methods=["POST"])
 def toggle():
-    # TODO(mihirg): Support multiple concurrent queries
+    global n_concurrent_workers
+
+    # TODO(mihirg): Support multiple simultaneous queries
     if current_queries:
         current_queries.clear()
     else:
+        request_json = request.get_json()
         template = None
-        if request.get_json():
-            for i in range(config.NUM_TEMPLATE_RETRIES):
+        if request_json:
+            for i in range(config.N_TEMPLATE_RETRIES):
                 r = requests.post(
                     f"{config.HANDLER_URL}{config.EMBEDDING_ENDPOINT}",
-                    json=request.get_json(),
+                    json=request_json,
                 )
                 if r.status_code == 200:
                     template = r.text
                     break
         if not template:
             return "Couldn't get template", 400
+        if not (
+            config.N_CONCURRENT_WORKERS_RANGE[0]
+            <= request_json["n_concurrent_workers"]
+            <= config.N_CONCURRENT_WORKERS_RANGE[2]
+        ):
+            return "Invalid number of workers", 400
 
         query_id = uuid.uuid4()
-        current_queries[query_id] = ImageQuery(template)
-        pool.map_async(thread_worker, [query_id] * config.MAX_CONCURRENT_REQUESTS)
+        n_concurrent_workers = request_json["n_concurrent_workers"]
+        current_queries[query_id] = ImageQuery(template, n_concurrent_workers)
+        current_queries[query_id].pool.map_async(
+            thread_worker, [query_id] * n_concurrent_workers
+        )
     return jsonify(running=bool(current_queries))
 
 
 @app.route("/results")
 def get_results():
-    if not current_queries:
-        return "No active query", 400
-
-    query = next(iter(current_queries.values()))
-    if query.finished:
-        current_queries.clear()
-    return jsonify(**query.get_results_dict(), running=bool(current_queries))
+    results_dict = {}
+    if current_queries:
+        query = next(iter(current_queries.values()))
+        if query.finished:
+            current_queries.clear()
+        results_dict = query.get_results_dict()
+    return jsonify(**results_dict, running=bool(current_queries))
 
 
 def thread_worker(query_id: str) -> bool:
