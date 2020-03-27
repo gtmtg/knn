@@ -69,27 +69,27 @@ class AsyncioBatch:
         """Asynchronously publish message."""
         # check if batch is not full
         if not self.full.is_set():
-            # check if batch can accept message
-            index = len(self.messages)
+            # Check if batch has space to accept message
             new_size = self.size + PublishRequest(messages=[message]).ByteSize()
-            overflow = (
-                new_size > self.settings.max_bytes
-                or index + 1 > self.settings.max_messages
-            )
-
-            if overflow:
-                # fix https://github.com/googleapis/google-cloud-python/issues/7107
-                if not self.messages:
-                    raise ValueError("Message exceeds max bytes")
-                # batch is full because it could not accept message
-                self.full.set()
-            else:
-                # Store message in the batch.
+            if new_size <= self.settings.max_bytes:
+                # Store message in the batch
+                index = len(self.messages)
                 self.messages.append(message)
                 self.size = new_size
 
-                # return a task to await for the message id
+                # Check if batch is now full
+                full = (
+                    new_size >= self.settings.max_bytes
+                    or index + 1 >= self.settings.max_messages
+                )
+                if full:
+                    self.full.set()
+
+                # Return a task to await for the message id
                 return asyncio.create_task(self.message_id(index))
+            elif not self.messages:
+                # Fix https://github.com/googleapis/google-cloud-python/issues/7107
+                raise ValueError("Message exceeds max bytes")
         return None  # the batch cannot accept a message
 
     async def message_id(self, index: int) -> str:
