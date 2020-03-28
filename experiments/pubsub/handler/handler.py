@@ -22,10 +22,11 @@ app = Flask(__name__)
 @app.route("/", methods=["POST"])
 def handler():
     message = base64.b64decode(request.get_json()["message"]["data"])
-    delay = struct.unpack("f", message)
+    delay = struct.unpack("f", message)[0]
 
     # Simulate computation
     time.sleep(delay)
 
-    publish_client.publish(RESPONSE_QUEUE, message)
+    future = publish_client.publish(RESPONSE_QUEUE, message)
+    future.result()  # block until message is actually published
     return "", 204
