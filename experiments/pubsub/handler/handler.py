@@ -1,8 +1,14 @@
+import base64
 import struct
 import time
 
 from flask import Flask, request
 from google.cloud import pubsub
+
+
+RESPONSE_QUEUE = "projects/{project_id}/topics/{topic}".format(
+    project_id="mihir-knn", topic="results"
+)
 
 
 publish_client = pubsub.PublisherClient(
@@ -15,11 +21,11 @@ app = Flask(__name__)
 
 @app.route("/", methods=["POST"])
 def handler():
-    delay = request.get_json()["delay"]
-    response = struct.pack("f", delay)
+    message = base64.b64decode(request.get_json()["message"]["data"])
+    delay = struct.unpack("f", message)
 
     # Simulate computation
     time.sleep(delay)
 
-    publish_client.publish("results", response)
-    return "", 200
+    publish_client.publish(RESPONSE_QUEUE, message)
+    return "", 204

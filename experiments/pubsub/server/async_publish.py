@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, you can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Source: https://github.com/mozilla/gcp-ingestion/blob/master/ingestion-edge/ingestion_edge/util.py  # noqa
+# Modified from https://github.com/mozilla/gcp-ingestion/blob/master/ingestion-edge/ingestion_edge/util.py  # noqa
 
 """Utilities."""
 
@@ -25,7 +25,10 @@ class AsyncioBatch:
         topic: str,
         settings: BatchSettings,
         autocommit: bool = True,
+        **kwargs
     ):
+        print(kwargs)
+
         """Initialize."""
         self.client = client
         self.topic = topic
@@ -67,7 +70,6 @@ class AsyncioBatch:
 
     def publish(self, message: PubsubMessage) -> Optional[asyncio.Task]:
         """Asynchronously publish message."""
-        # check if batch is not full
         if not self.full.is_set():
             # Check if batch has space to accept message
             new_size = self.size + PublishRequest(messages=[message]).ByteSize()
@@ -90,6 +92,7 @@ class AsyncioBatch:
             elif not self.messages:
                 # Fix https://github.com/googleapis/google-cloud-python/issues/7107
                 raise ValueError("Message exceeds max bytes")
+
         return None  # the batch cannot accept a message
 
     async def message_id(self, index: int) -> str:
