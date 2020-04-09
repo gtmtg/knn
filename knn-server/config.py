@@ -9,5 +9,7 @@ TEMPLATE_ENDPOINT = "/get_embedding"
 IMAGE_URL_FORMAT = "https://storage.googleapis.com/mihir-knn/{}"
 
 N_TEMPLATE_ATTEMPTS = 5
+N_QUERY_ATTEMPTS = 3
+RETRY_ERROR_MESSAGES = {"Service Unavailable", "Rate exceeded."}
 
 N_TOTAL_IMAGES = 5000

@@ -126,6 +126,9 @@ class ImageQuery:
 
     @utils.unasync_eventually
     async def stop(self) -> None:
+        await self._stop()
+
+    async def _stop(self) -> None:
         if self.query_task is not None:
             self.query_task.cancel()
             try:
@@ -141,17 +144,27 @@ class ImageQuery:
         self, request: Dict[str, Any]
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], float]:
         result = None
-        start_time = time.time()
-        end_time = start_time
+        start_time = 0.0
+        end_time = 0.0
 
-        try:
-            endpoint = f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}"
-            async with self.session.post(endpoint, json=request) as response:
-                end_time = time.time()
-                if response.status == 200:
-                    result = await response.json()
-        except aiohttp.ClientConnectionError:
-            pass
+        for i in range(config.N_QUERY_ATTEMPTS):
+            start_time = time.time()
+            end_time = start_time
+
+            try:
+                endpoint = f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}"
+                async with self.session.post(endpoint, json=request) as response:
+                    end_time = time.time()
+                    if response.status == 200:
+                        result = await response.json()
+                        break
+                    else:
+                        error_message = (await response.text()).strip()
+                        if error_message not in config.RETRY_ERROR_MESSAGES:
+                            break
+            except aiohttp.ClientConnectionError:
+                break
+
         return request, result, end_time - start_time
 
     # TODO(mihirg): Better type annotation
@@ -295,7 +308,7 @@ async def get_results(request):
     return json(results_dict)
 
 
-def clear_queries():
+def clear_queries() -> None:
     query_ids = list(current_queries.keys())
     for query_id in query_ids:
         current_queries.pop(query_id).stop()
