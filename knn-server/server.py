@@ -64,7 +64,8 @@ class ImageResult:
     image_name: str
     score_map: Optional[str] = None
 
-    def make_result_dict(self) -> dict:  # TODO(mihirg): Better type annotation
+    # TODO(mihirg): Better type annotation
+    def make_result_dict(self) -> Dict[str, Any]:
         result = {
             "image_name": self.image_name,
             "image_url": config.IMAGE_URL_FORMAT.format(self.image_name),
@@ -111,7 +112,7 @@ class ImageQuery:
         self.query_task: Optional[asyncio.Task] = None
 
     # TODO(mihirg): Better type annotation
-    async def set_template(self, template_request: dict) -> bool:
+    async def set_template(self, template_request: Dict[str, Any]) -> bool:
         for i in range(config.N_TEMPLATE_ATTEMPTS):
             endpoint = f"{config.HANDLER_URL}{config.TEMPLATE_ENDPOINT}"
             async with self.session.post(endpoint, json=template_request) as response:
@@ -136,7 +137,9 @@ class ImageQuery:
     # REQUEST POOL
 
     # TODO(mihirg): Better type annotation
-    async def _request(self, request: dict) -> Tuple[dict, Optional[dict], float]:
+    async def _request(
+        self, request: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], float]:
         result = None
         start_time = time.time()
         end_time = start_time
@@ -152,7 +155,9 @@ class ImageQuery:
         return request, result, end_time - start_time
 
     # TODO(mihirg): Better type annotation
-    def _make_requests(self) -> Iterator[Awaitable[Tuple[dict, Optional[dict], float]]]:
+    def _make_requests(
+        self,
+    ) -> Iterator[Awaitable[Tuple[Dict[str, Any], Optional[Dict[str, Any]], float]]]:
         for image_chunk in self.dataset:
             yield self._request(
                 {
@@ -172,6 +177,7 @@ class ImageQuery:
 
     # RESULT COMPILATION
 
+    # TODO(mihirg): Better type annotation
     def _update_results(
         self,
         chunk_request: Dict[str, Any],
@@ -204,6 +210,7 @@ class ImageQuery:
             elif result > self.results[0]:
                 heapq.heapreplace(self.results, result)
 
+    # TODO(mihirg): Better type annotation
     def get_results_dict(self) -> Dict[str, Any]:
         elapsed_time = (time.time() - self.start_time) if self.start_time else 0
         return {
@@ -291,8 +298,7 @@ async def get_results(request):
 def clear_queries():
     query_ids = list(current_queries.keys())
     for query_id in query_ids:
-        query = current_queries.pop(query_id)
-        query.stop()
+        current_queries.pop(query_id).stop()
 
 
 if __name__ == "__main__":
