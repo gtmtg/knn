@@ -9,7 +9,7 @@ import time
 import uuid
 
 from flask import Flask, jsonify, request
-from google.cloud import storage, pubsub
+from google.cloud import storage
 import numpy as np
 from PIL import Image
 import torch
@@ -19,7 +19,6 @@ import config
 
 # Set up Google Cloud clients
 storage_client = storage.Client()
-publish_client = pubsub.PublisherClient()
 storage_bucket = storage_client.bucket(config.CLOUD_STORAGE_BUCKET)
 
 

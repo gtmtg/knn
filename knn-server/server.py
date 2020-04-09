@@ -1,21 +1,35 @@
+import asyncio
 import collections
 from dataclasses import dataclass
 import heapq
-from multiprocessing.pool import ThreadPool
-import threading
 import time
 import uuid
 
-from typing import Optional, Iterator, List, Dict, Any, Union
+from typing import Optional, Iterator, List, Any, Dict, Awaitable, Tuple
 
-from flask import Flask, jsonify, render_template, request
-import requests
+import aiohttp
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from runstats import Statistics
+from sanic import Sanic
+from sanic.response import json, html
 
 import config
+import utils
+
+
+# Start web server
+app = Sanic(__name__)
+app.static("/static", "./static")
+jinja = Environment(
+    loader=FileSystemLoader("./templates"), autoescape=select_autoescape(["html"]),
+)
+
+current_queries = {}  # type: Dict[str, ImageQuery]
+n_concurrent_workers_cached = config.N_CONCURRENT_WORKERS_RANGE[1]  # default
 
 
 class DatasetIterator:
-    def __init__(self, file_list_path: str, chunk_size: str) -> None:
+    def __init__(self, file_list_path: str, chunk_size: int) -> None:
         self.file_list = open(file_list_path, "r")
         self.n_total = 0
         for line in self.file_list:
@@ -24,26 +38,24 @@ class DatasetIterator:
             self.n_total += 1
         self.file_list.seek(0)
 
-        self.lock = threading.RLock()
         self.chunk_size = chunk_size
 
     def __iter__(self) -> Iterator[List[str]]:
         return self
 
     def __next__(self) -> List[str]:
-        with self.lock:
-            first_file = self.file_list.readline().strip()
-            if not first_file:
-                raise StopIteration
+        first_file = self.file_list.readline().strip()
+        if not first_file:
+            raise StopIteration
 
-            files = [first_file]
-            while len(files) < self.chunk_size:
-                next_file = self.file_list.readline().strip()
-                if next_file:
-                    files.append(next_file)
-                else:
-                    break
-            return files
+        files = [first_file]
+        while len(files) < self.chunk_size:
+            next_file = self.file_list.readline().strip()
+            if next_file:
+                files.append(next_file)
+            else:
+                break
+        return files
 
 
 @dataclass(order=True)
@@ -52,7 +64,7 @@ class ImageResult:
     image_name: str
     score_map: Optional[str] = None
 
-    def make_result_dict(self) -> Dict[str, Union[str, float]]:
+    def make_result_dict(self) -> dict:  # TODO(mihirg): Better type annotation
         result = {
             "image_name": self.image_name,
             "image_url": config.IMAGE_URL_FORMAT.format(self.image_name),
@@ -66,201 +78,222 @@ class ImageResult:
 class ImageQuery:
     def __init__(
         self,
-        template: str,
         n_concurrent_workers: int,
         include_score_map: bool = True,
         n_results_to_display: int = config.N_RESULTS_TO_DISPLAY,
         file_list_path: str = config.IMAGE_LIST_PATH,
         chunk_size: int = config.CHUNK_SIZE,
     ) -> None:
-        self.template = template
+        connector = aiohttp.TCPConnector(limit=0)  # no limit, make sure ulimit is high!
+        self.session = aiohttp.ClientSession(connector=connector)
+        self.n_concurrent_workers = n_concurrent_workers
+
         self.include_score_map = include_score_map
+        self.chunk_size = chunk_size
         self.dataset = DatasetIterator(file_list_path, chunk_size)
 
-        self.total_time = 0
-        self.gcr_time = 0
-        self.request_time = 0
-        self.compute_time = 0
-        self.n_requests = 0
+        self.total_time = Statistics()
+        self.gcr_time = Statistics()
+        self.request_time = Statistics()
+        self.compute_time = Statistics()
 
         self.n_processed = 0
         self.n_skipped = 0
-        self.n_chunks_per_worker = collections.defaultdict(int)
+        self.n_requests = 0
+        self.n_requests_per_worker: Dict[str, int] = collections.defaultdict(int)
 
-        self.results = []
+        self.results: List[ImageResult] = []
         self.n_results_to_display = n_results_to_display
 
-        self.lock = threading.RLock()
-        self.pool = ThreadPool(processes=n_concurrent_workers)
+        # Will be initialized later
+        self.template: Optional[str] = None
+        self.start_time: Optional[float] = None
+        self.query_task: Optional[asyncio.Task] = None
 
-        self.start_time = time.time()
+    # TODO(mihirg): Better type annotation
+    async def set_template(self, template_request: dict) -> bool:
+        for i in range(config.N_TEMPLATE_ATTEMPTS):
+            endpoint = f"{config.HANDLER_URL}{config.TEMPLATE_ENDPOINT}"
+            async with self.session.post(endpoint, json=template_request) as response:
+                if response.status == 200:
+                    self.template = await response.text()
+                    return True
+        raise RuntimeError("Couldn't get template")
 
-    def __del__(self) -> None:
-        self.pool.close()
-        self.pool.join()
+    def start(self) -> None:
+        self.query_task = asyncio.create_task(self._run_query())
 
-    def generate_requests(self) -> Iterator[Dict[str, Any]]:
+    @utils.unasync_eventually
+    async def stop(self) -> None:
+        if self.query_task is not None:
+            self.query_task.cancel()
+            try:
+                await self.query_task
+            except asyncio.CancelledError:
+                pass
+        await self.session.close()
+
+    # REQUEST POOL
+
+    # TODO(mihirg): Better type annotation
+    async def _request(self, request: dict) -> Tuple[dict, Optional[dict], float]:
+        result = None
+        start_time = time.time()
+        end_time = start_time
+
+        try:
+            endpoint = f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}"
+            async with self.session.post(endpoint, json=request) as response:
+                end_time = time.time()
+                if response.status == 200:
+                    result = await response.json()
+        except aiohttp.ClientConnectionError:
+            pass
+        return request, result, end_time - start_time
+
+    # TODO(mihirg): Better type annotation
+    def _make_requests(self) -> Iterator[Awaitable[Tuple[dict, Optional[dict], float]]]:
         for image_chunk in self.dataset:
-            yield {
-                "template": self.template,
-                "images": image_chunk,
-                "include_score_map": self.include_score_map,
-            }
+            yield self._request(
+                {
+                    "template": self.template,
+                    "images": image_chunk,
+                    "include_score_map": self.include_score_map,
+                }
+            )
 
-    def update_results(
+    async def _run_query(self) -> None:
+        self.start_time = time.time()
+        for response_tuple in utils.limited_as_completed(
+            self._make_requests(), self.n_concurrent_workers
+        ):
+            request, result, elapsed_time = await response_tuple
+            self._update_results(request, result, elapsed_time)
+
+    # RESULT COMPILATION
+
+    def _update_results(
         self,
         chunk_request: Dict[str, Any],
         chunk_results: Optional[Dict[str, Any]],
         elapsed_time: float,
     ) -> None:
-        with self.lock:
-            self.n_requests += 1
+        self.n_requests += 1
 
-            if not chunk_results:
-                self.n_skipped += len(chunk_request["images"])
-                return
+        if not chunk_results:
+            self.n_skipped += len(chunk_request["images"])
+            return
 
-            self.total_time += elapsed_time
-            self.gcr_time += chunk_results["gcr_time"]
-            self.request_time += chunk_results["request_time"]
-            self.compute_time += chunk_results["compute_time"]
+        self.total_time.push(elapsed_time)
+        self.gcr_time.push(chunk_results["gcr_time"])
+        self.request_time.push(chunk_results["request_time"])
+        self.compute_time.push(chunk_results["compute_time"])
 
-            self.n_processed += len(chunk_results["images"])
-            self.n_skipped += len(chunk_request["images"]) - len(
-                chunk_results["images"]
+        self.n_processed += len(chunk_results["images"])
+        self.n_skipped += len(chunk_request["images"]) - len(chunk_results["images"])
+        self.n_requests_per_worker[chunk_results["worker_id"]] += 1
+
+        for image_name, result_dict in chunk_results["images"].items():
+            result = ImageResult(
+                image_name=image_name,
+                score=result_dict["score"],
+                score_map=result_dict.get("score_map"),
             )
-            self.n_chunks_per_worker[chunk_results["worker_id"]] += 1
-
-            for image_name, result_dict in chunk_results["images"].items():
-                result = ImageResult(
-                    image_name=image_name,
-                    score=result_dict["score"],
-                    score_map=result_dict.get("score_map"),
-                )
-                if len(self.results) < self.n_results_to_display:
-                    heapq.heappush(self.results, result)
-                elif result > self.results[0]:
-                    heapq.heapreplace(self.results, result)
+            if len(self.results) < self.n_results_to_display:
+                heapq.heappush(self.results, result)
+            elif result > self.results[0]:
+                heapq.heapreplace(self.results, result)
 
     def get_results_dict(self) -> Dict[str, Any]:
-        with self.lock:
-
-            def amortize(total: float) -> float:
-                return total / self.n_processed if self.n_processed else 0
-
-            return {
-                "stats": {
-                    "cost": self.cost,
-                    "n_processed": self.n_processed,
-                    "n_skipped": self.n_skipped,
-                    "n_total": self.dataset.n_total,
-                    "elapsed_time": time.time() - self.start_time,
-                    "total_time": amortize(self.total_time),
-                    "gcr_time": amortize(self.gcr_time),
-                    "request_time": amortize(self.request_time),
-                    "compute_time": amortize(self.compute_time),
-                },
-                "workers": dict(enumerate(self.n_chunks_per_worker.values())),
-                "results": [
-                    r.make_result_dict() for r in reversed(sorted(self.results))
-                ],
-            }
+        elapsed_time = (time.time() - self.start_time) if self.start_time else 0
+        return {
+            "stats": {
+                "cost": self.cost,
+                "n_processed": self.n_processed,
+                "n_skipped": self.n_skipped,
+                "n_total": self.dataset.n_total,
+                "elapsed_time": elapsed_time,
+                "total_time": self.total_time.mean(),
+                "gcr_time": self.gcr_time.mean(),
+                "request_time": self.request_time.mean(),
+                "compute_time": self.compute_time.mean(),
+                "chunk_size": self.chunk_size,
+            },
+            "workers": dict(enumerate(self.n_requests_per_worker.values())),
+            "results": [r.make_result_dict() for r in reversed(sorted(self.results))],
+        }
 
     @property
     def cost(self) -> float:
-        with self.lock:
-            return (
-                0.00002400 * self.gcr_time
-                + 2 * 0.00000250 * self.gcr_time
-                + 0.40 / 1000000 * self.n_requests
-            )
+        total_gcr_time = self.gcr_time.mean() * len(self.gcr_time)
+        return (
+            0.00002400 * total_gcr_time
+            + 2 * 0.00000250 * total_gcr_time
+            + 0.40 / 1000000 * self.n_requests
+        )
 
     @property
     def finished(self) -> bool:
-        with self.lock:
-            return self.n_processed + self.n_skipped >= self.dataset.n_total
-
-
-current_queries = {}  # type: Dict[str, ImageQuery]
-n_concurrent_workers = config.N_CONCURRENT_WORKERS_RANGE[1]  # default
-
-
-# Start web server
-app = Flask(__name__)
+        return self.n_processed + self.n_skipped >= self.dataset.n_total
 
 
 @app.route("/")
-def homepage():
-    return render_template(
-        "index.html",
-        n_concurrent_workers=n_concurrent_workers,
-        running=bool(current_queries),
+async def homepage(request):
+    template = jinja.get_template("index.html")
+    response = template.render(
+        n_concurrent_workers=n_concurrent_workers_cached, running=bool(current_queries)
     )
+    return html(response)
 
 
 @app.route("/running")
-def get_running():
-    return jsonify(running=bool(current_queries))
+async def get_running(request):
+    return json({"running": bool(current_queries)})
 
 
 @app.route("/toggle", methods=["POST"])
-def toggle():
-    global n_concurrent_workers
+async def toggle(request):
+    global n_concurrent_workers_cached
 
     # TODO(mihirg): Support multiple simultaneous queries
     if current_queries:
-        current_queries.clear()
+        clear_queries()
     else:
-        request_json = request.get_json()
-        template = None
-        if request_json:
-            for i in range(config.N_TEMPLATE_RETRIES):
-                r = requests.post(
-                    f"{config.HANDLER_URL}{config.EMBEDDING_ENDPOINT}",
-                    json=request_json,
-                )
-                if r.status_code == 200:
-                    template = r.text
-                    break
-        if not template:
-            return "Couldn't get template", 400
-        if not (
+        # Validate request
+        assert (
             config.N_CONCURRENT_WORKERS_RANGE[0]
-            <= request_json["n_concurrent_workers"]
+            <= request.json["n_concurrent_workers"]
             <= config.N_CONCURRENT_WORKERS_RANGE[2]
-        ):
-            return "Invalid number of workers", 400
-
-        query_id = uuid.uuid4()
-        n_concurrent_workers = request_json["n_concurrent_workers"]
-        current_queries[query_id] = ImageQuery(template, n_concurrent_workers)
-        current_queries[query_id].pool.map_async(
-            thread_worker, [query_id] * n_concurrent_workers
         )
-    return jsonify(running=bool(current_queries))
+        n_concurrent_workers_cached = request.json["n_concurrent_workers"]
+
+        query = ImageQuery(n_concurrent_workers_cached)
+        current_queries[uuid.uuid4()] = query
+        await query.set_template(request.json)
+        query.start()
+
+    return json({"running": bool(current_queries)})
 
 
 @app.route("/results")
-def get_results():
+async def get_results(request):
     results_dict = {}
     if current_queries:
         query = next(iter(current_queries.values()))
         if query.finished:
-            current_queries.clear()
+            clear_queries()
         results_dict = query.get_results_dict()
-    return jsonify(**results_dict, running=bool(current_queries))
+
+    results_dict["running"] = bool(current_queries)
+    return json(results_dict)
 
 
-def thread_worker(query_id: str) -> bool:
-    query = current_queries[query_id]
-    for chunk_request in query.generate_requests():
-        r = requests.post(
-            f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}", json=chunk_request
-        )
-        chunk_results = r.json() if r.status_code == 200 else None
+def clear_queries():
+    query_ids = list(current_queries.keys())
+    for query_id in query_ids:
+        query = current_queries.pop(query_id)
+        query.stop()
 
-        if query_id not in current_queries:
-            break
-        query.update_results(chunk_request, chunk_results, r.elapsed.total_seconds())
 
-    return True
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

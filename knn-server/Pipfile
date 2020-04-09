@@ -6,9 +6,11 @@ verify_ssl = true
 [dev-packages]
 
 [packages]
-flask = "*"
-requests = "*"
-gunicorn = "*"
+sanic = "*"
+aiohttp = "*"
+runstats = "*"
+jinja2 = "*"
+uvicorn = "*"
 
 [requires]
 python_version = "3.7"
