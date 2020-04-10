@@ -121,14 +121,10 @@ class ImageQuery:
                     return True
         raise RuntimeError("Couldn't get template")
 
-    def start(self) -> None:
+    async def start(self) -> None:
         self.query_task = asyncio.create_task(self._run_query())
 
-    @utils.unasync_eventually
     async def stop(self) -> None:
-        await self._stop()
-
-    async def _stop(self) -> None:
         if self.query_task is not None:
             self.query_task.cancel()
             try:
@@ -158,10 +154,6 @@ class ImageQuery:
                     if response.status == 200:
                         result = await response.json()
                         break
-                    else:
-                        error_message = (await response.text()).strip()
-                        if error_message not in config.RETRY_ERROR_MESSAGES:
-                            break
             except aiohttp.ClientConnectionError:
                 break
 
@@ -261,7 +253,9 @@ class ImageQuery:
 async def homepage(request):
     template = jinja.get_template("index.html")
     response = template.render(
-        n_concurrent_workers=n_concurrent_workers_cached, running=bool(current_queries)
+        n_concurrent_workers=n_concurrent_workers_cached,
+        running=bool(current_queries),
+        demo_images=config.DEMO_IMAGES,
     )
     return html(response)
 
@@ -277,7 +271,7 @@ async def toggle(request):
 
     # TODO(mihirg): Support multiple simultaneous queries
     if current_queries:
-        clear_queries()
+        await clear_queries()
     else:
         # Validate request
         assert (
@@ -290,7 +284,7 @@ async def toggle(request):
         query = ImageQuery(n_concurrent_workers_cached)
         current_queries[uuid.uuid4()] = query
         await query.set_template(request.json)
-        query.start()
+        await query.start()
 
     return json({"running": bool(current_queries)})
 
@@ -301,17 +295,17 @@ async def get_results(request):
     if current_queries:
         query = next(iter(current_queries.values()))
         if query.finished:
-            clear_queries()
+            await clear_queries()
         results_dict = query.get_results_dict()
 
     results_dict["running"] = bool(current_queries)
     return json(results_dict)
 
 
-def clear_queries() -> None:
+async def clear_queries() -> None:
     query_ids = list(current_queries.keys())
     for query_id in query_ids:
-        current_queries.pop(query_id).stop()
+        await current_queries.pop(query_id).stop()
 
 
 if __name__ == "__main__":

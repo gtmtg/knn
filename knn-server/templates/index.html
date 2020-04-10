@@ -77,13 +77,7 @@
     <script type="text/javascript">
     // Labeler
     const image_url_prefix = "https://storage.googleapis.com/mihir-knn/";
-    const images = [
-        "images/val2017/000000050811.jpg",
-        "images/val2017/000000230983.jpg",
-        "images/val2017/000000038118.jpg",
-        "images/val2017/000000001584.jpg",
-        "images/val2017/000000213593.jpg",
-    ];
+    const images = {{ demo_images|tojson }};
 
     var labeler = new ImageLabeler;
 
@@ -247,14 +241,14 @@
         update_stat("images_per_second_avg",
                     `${images_per_second_avg.toFixed(1)} img/sec (overall)`,
                     images_per_second_avg,
-                    50);
+                    100);
 
         // Images per second (recent)
         let images_per_second = make_derivative(stats, prev_stats, "images_per_second", (s) => s.n_processed);
         update_stat("images_per_second",
                     `${images_per_second.toFixed(1)} img/sec (recent)`,
                     images_per_second,
-                    50);
+                    100);
 
         // total cost of computation
         update_stat_no_bar("total_cost", `Overall cost: $${stats.cost.toFixed(2)}`);
