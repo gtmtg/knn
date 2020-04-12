@@ -14,7 +14,7 @@
                 <div class="col-9">
                     <canvas id="main_canvas" width="640" height="480"></canvas>
                     <br>
-                    <button id="toggle"></button>
+                    <button id="toggle">Start</button>
                     <button id="clear" onclick="handle_clear_boxes()">Clear Boxes</button>
                     <span style="float: right;">Concurrent workers: <input id="n_concurrent_workers" type="number" value="{{ n_concurrent_workers }}" min="1" max="1000"/></span>
                     <br>
@@ -76,7 +76,7 @@
     <script type="text/javascript" src="static/klabel.js"></script>
     <script type="text/javascript">
     // Labeler
-    const image_url_prefix = "https://storage.googleapis.com/mihir-knn/";
+    const image_url_prefix = {{ image_url_prefix|tojson }};
     const images = {{ demo_images|tojson }};
 
     var labeler = new ImageLabeler;
@@ -117,40 +117,51 @@
     const poll_interval = 1000;  // ms
     let poll;
 
-    let running = false;
+    let query_id = null;
     let prev_stats = {};
     let prev_workers = {};
 
-    const set_running = (is_running) => {
-        running = is_running;
-        $("#toggle").html(running ? "Stop" : "Start");
+    const start_query = (new_query_id) => {
+        query_id = new_query_id;
+        $("#toggle").html("Stop");
+        $("#results").empty();
+        $("#stats").show();
+        $("#workers").show();
 
-        if (running) {
-            $("#results").empty();
-            $("#stats").show();
-            $("#workers").show();
+        // Repeatedly poll for updated results from server
+        poll = setInterval(
+            () => $.getJSON("/results", { query_id }, handle_results),
+            poll_interval
+        );
+    }
 
-            // Repeatedly poll for updated results from server
-            poll = setInterval(
-                () => $.getJSON("/results", handle_results),
-                poll_interval
-            );
-        } else {
-            prev_stats = {};
-            prev_workers = {};
-            clearInterval(poll);
-        }
-    };
-
-    set_running({{ running|tojson }});  // Set initial state from server
+    const end_query = () => {
+        query_id = null;
+        $("#toggle").html("Start");
+        prev_stats = {};
+        prev_workers = {};
+        clearInterval(poll);
+    }
 
     $("#toggle").click(() => {
+        if (query_id) {  // Should end query
+            let payload = { query_id };
+            $("#toggle").html("...");
+            $.ajax({
+                url: "/stop",
+                type: "PUT",
+                data: JSON.stringify(payload),
+                contentType: "application/json",
+                success: end_query,
+                error: () => $("#toggle").html("Stop"),
+            });
+        } else {  // Should start query
+            let annotations = labeler.get_annotations()[labeler.get_current_frame_num()].annotations;
+            if (annotations.length !== 1) {
+                alert('Please draw exactly one box to define a query patch.');
+                return;
+            }
 
-        // grab the bounding box from the labeler and perform KNN search with this patch as the query
-
-        let annotations = labeler.get_annotations()[labeler.get_current_frame_num()].annotations;
-        let payload = {};
-        if (annotations.length === 1) {
             let bbox = annotations[0].bbox;
             let source_image = labeler.get_current_frame().source_image;
             let patch = [
@@ -161,31 +172,28 @@
                 source_image.naturalWidth  * bbox.bmax.x, // x2
                 source_image.naturalHeight * bbox.bmax.y, // y2
             ];
-            payload = {
+            let payload = {
                 image: images[labeler.get_current_frame_num()],
                 n_concurrent_workers: parseInt($("#n_concurrent_workers").val()),
                 patch,
             };
-        } else if (!running) {  // TODO: Don't depend on client-side state being in sync with server-side state
-            alert('Please draw exactly one box to define a query patch.');
-            return;
-        }
 
-        $("#toggle").html("...");
-        $.ajax({
-            url: "/toggle",
-            type: "POST",
-            data: JSON.stringify(payload),
-            contentType: "application/json",
-            success: (data) => set_running(data.running),
-            error: () => $("#toggle").html(running ? "Stop" : "Start"),
-        });
+            $("#toggle").html("...");
+            $.ajax({
+                url: "/start",
+                type: "POST",
+                data: JSON.stringify(payload),
+                contentType: "application/json",
+                success: (data) => start_query(data.query_id),
+                error: () => $("#toggle").html("Start"),
+            });
+        }
     });
 
     // Results
 
     const handle_results = (data) => {
-        if (!running) return;
+        if (!query_id) return;
 
         console.log(data);
 
@@ -193,7 +201,7 @@
         update_performance_stats(data.stats);
         update_worker_info(data.workers);
 
-        if (!data.running) set_running(false);  // stop when query is complete
+        if (!data.running) end_query();  // stop when query is complete
     };
 
     const update_results = (results) => {
@@ -207,7 +215,7 @@
                 result_html += `<div>`;
                 result_html += '<div>'
                 result_html += `(${rank}) ${result['image_name']}, score=${Number.parseFloat(result['score']).toFixed(6)}`;
-                result_html += `<div><img src="${result['image_url']}" width="250" /><img src="${result['score_map_url']}" width="250" /></div>`;
+                result_html += `<div><img src="${result['image_url']}" width="250" /><img src="data:image/jpeg;base64,${result['score_map']}" width="250" /></div>`;
                 result_html += `</div>`;
                 result_html += `</div>`;
                 rank++;

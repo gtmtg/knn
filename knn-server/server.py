@@ -11,7 +11,7 @@ import aiohttp
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from runstats import Statistics
 from sanic import Sanic
-from sanic.response import json, html
+from sanic.response import json, html, text
 
 import config
 import utils
@@ -25,7 +25,6 @@ jinja = Environment(
 )
 
 current_queries = {}  # type: Dict[str, ImageQuery]
-n_concurrent_workers_cached = config.N_CONCURRENT_WORKERS_RANGE[1]  # default
 
 
 class DatasetIterator:
@@ -68,17 +67,18 @@ class ImageResult:
     def make_result_dict(self) -> Dict[str, Any]:
         result = {
             "image_name": self.image_name,
-            "image_url": config.IMAGE_URL_FORMAT.format(self.image_name),
+            "image_url": f"{config.IMAGE_URL_PREFIX}{self.image_name}",
             "score": self.score,
         }
         if self.score_map:
-            result["score_map_url"] = f"data:image/jpeg;base64,{self.score_map}"
+            result["score_map"] = self.score_map
         return result
 
 
 class ImageQuery:
     def __init__(
         self,
+        query_id: str,
         n_concurrent_workers: int,
         include_score_map: bool = True,
         n_results_to_display: int = config.N_RESULTS_TO_DISPLAY,
@@ -87,6 +87,8 @@ class ImageQuery:
     ) -> None:
         connector = aiohttp.TCPConnector(limit=0)  # no limit, make sure ulimit is high!
         self.session = aiohttp.ClientSession(connector=connector)
+
+        self.query_id = query_id
         self.n_concurrent_workers = n_concurrent_workers
 
         self.include_score_map = include_score_map
@@ -125,13 +127,13 @@ class ImageQuery:
         self.query_task = asyncio.create_task(self._run_query())
 
     async def stop(self) -> None:
-        if self.query_task is not None:
+        if self.query_task is not None and not self.query_task.done():
             self.query_task.cancel()
-            try:
-                await self.query_task
-            except asyncio.CancelledError:
-                pass
-        await self.session.close()
+            await self.query_task
+
+    async def _schedule_cleanup(self) -> None:
+        await asyncio.sleep(config.QUERY_CLEANUP_TIME)
+        del current_queries[self.query_id]
 
     # REQUEST POOL
 
@@ -173,12 +175,19 @@ class ImageQuery:
             )
 
     async def _run_query(self) -> None:
-        self.start_time = time.time()
-        for response_tuple in utils.limited_as_completed(
-            self._make_requests(), self.n_concurrent_workers
-        ):
-            request, result, elapsed_time = await response_tuple
-            self._update_results(request, result, elapsed_time)
+        try:
+            self.start_time = time.time()
+            for response_tuple in utils.limited_as_completed(
+                self._make_requests(), self.n_concurrent_workers
+            ):
+                request, result, elapsed_time = await response_tuple
+                self._update_results(request, result, elapsed_time)
+        except asyncio.CancelledError:
+            pass
+        else:
+            asyncio.create_task(self._schedule_cleanup())
+        finally:
+            await self.session.close()
 
     # RESULT COMPILATION
 
@@ -233,6 +242,7 @@ class ImageQuery:
             },
             "workers": dict(enumerate(self.n_requests_per_worker.values())),
             "results": [r.make_result_dict() for r in reversed(sorted(self.results))],
+            "running": not self.finished,
         }
 
     @property
@@ -253,59 +263,46 @@ class ImageQuery:
 async def homepage(request):
     template = jinja.get_template("index.html")
     response = template.render(
-        n_concurrent_workers=n_concurrent_workers_cached,
+        n_concurrent_workers=config.N_CONCURRENT_WORKERS_RANGE[1],  # default
         running=bool(current_queries),
         demo_images=config.DEMO_IMAGES,
+        image_url_prefix=config.IMAGE_URL_PREFIX,
     )
     return html(response)
 
 
-@app.route("/running")
-async def get_running(request):
-    return json({"running": bool(current_queries)})
+@app.route("/start", methods=["POST"])
+async def start(request):
+    assert (
+        config.N_CONCURRENT_WORKERS_RANGE[0]
+        <= request.json["n_concurrent_workers"]
+        <= config.N_CONCURRENT_WORKERS_RANGE[2]
+    )
+    query_id = str(uuid.uuid4())
+    query = ImageQuery(query_id, request.json["n_concurrent_workers"])
+    current_queries[query_id] = query
+
+    await query.set_template(request.json)
+    await query.start()
+
+    return json({"query_id": query_id})
 
 
-@app.route("/toggle", methods=["POST"])
-async def toggle(request):
-    global n_concurrent_workers_cached
-
-    # TODO(mihirg): Support multiple simultaneous queries
-    if current_queries:
-        await clear_queries()
-    else:
-        # Validate request
-        assert (
-            config.N_CONCURRENT_WORKERS_RANGE[0]
-            <= request.json["n_concurrent_workers"]
-            <= config.N_CONCURRENT_WORKERS_RANGE[2]
-        )
-        n_concurrent_workers_cached = request.json["n_concurrent_workers"]
-
-        query = ImageQuery(n_concurrent_workers_cached)
-        current_queries[uuid.uuid4()] = query
-        await query.set_template(request.json)
-        await query.start()
-
-    return json({"running": bool(current_queries)})
-
-
-@app.route("/results")
+@app.route("/results", methods=["GET"])
 async def get_results(request):
-    results_dict = {}
-    if current_queries:
-        query = next(iter(current_queries.values()))
-        if query.finished:
-            await clear_queries()
-        results_dict = query.get_results_dict()
-
-    results_dict["running"] = bool(current_queries)
-    return json(results_dict)
+    query_id = request.args["query_id"][0]
+    query = current_queries[query_id]
+    if query.finished:
+        del current_queries[query_id]
+        await query.stop()
+    return json(query.get_results_dict())
 
 
-async def clear_queries() -> None:
-    query_ids = list(current_queries.keys())
-    for query_id in query_ids:
-        await current_queries.pop(query_id).stop()
+@app.route("/stop", methods=["PUT"])
+async def stop(request):
+    query_id = request.json["query_id"]
+    await current_queries.pop(query_id).stop()
+    return text("", status=204)
 
 
 if __name__ == "__main__":
