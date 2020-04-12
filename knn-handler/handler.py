@@ -104,9 +104,9 @@ def handler(start_time):
     return jsonify(results)
 
 
-@app.route("/get_embedding", methods=["POST"])
+@app.route("/get_template", methods=["POST"])
 @ensure_globals
-def get_embedding(start_time):
+def get_template(start_time):
     event = request.get_json()
 
     image = download_image(event["image"])

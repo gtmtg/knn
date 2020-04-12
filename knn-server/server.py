@@ -112,6 +112,7 @@ class ImageQuery:
         self.template: Optional[str] = None
         self.start_time: Optional[float] = None
         self.query_task: Optional[asyncio.Task] = None
+        self.cleanup_task: Optional[asyncio.Task] = None
 
     # TODO(mihirg): Better type annotation
     async def set_template(self, template_request: Dict[str, Any]) -> bool:
@@ -130,10 +131,16 @@ class ImageQuery:
         if self.query_task is not None and not self.query_task.done():
             self.query_task.cancel()
             await self.query_task
+        if self.cleanup_task is not None and not self.cleanup_task.done():
+            self.cleanup_task.cancel()
+            await self.cleanup_task
 
     async def _schedule_cleanup(self) -> None:
-        await asyncio.sleep(config.QUERY_CLEANUP_TIME)
-        del current_queries[self.query_id]
+        try:
+            await asyncio.sleep(config.QUERY_CLEANUP_TIME)
+            del current_queries[self.query_id]
+        except asyncio.CancelledError:
+            pass
 
     # REQUEST POOL
 
@@ -185,7 +192,7 @@ class ImageQuery:
         except asyncio.CancelledError:
             pass
         else:
-            asyncio.create_task(self._schedule_cleanup())
+            self.cleanup_task = asyncio.create_task(self._schedule_cleanup())
         finally:
             await self.session.close()
 
@@ -273,16 +280,19 @@ async def homepage(request):
 
 @app.route("/start", methods=["POST"])
 async def start(request):
+    n_concurrent_workers = request.json.get(
+        "n_concurrent_workers", config.N_CONCURRENT_WORKERS_RANGE[1]  # default
+    )
     assert (
         config.N_CONCURRENT_WORKERS_RANGE[0]
-        <= request.json["n_concurrent_workers"]
+        <= n_concurrent_workers
         <= config.N_CONCURRENT_WORKERS_RANGE[2]
     )
     query_id = str(uuid.uuid4())
-    query = ImageQuery(query_id, request.json["n_concurrent_workers"])
+    query = ImageQuery(query_id, n_concurrent_workers)
     current_queries[query_id] = query
 
-    await query.set_template(request.json)
+    await query.set_template(request.json["template"])
     await query.start()
 
     return json({"query_id": query_id})

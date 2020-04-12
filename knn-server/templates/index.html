@@ -173,9 +173,11 @@
                 source_image.naturalHeight * bbox.bmax.y, // y2
             ];
             let payload = {
-                image: images[labeler.get_current_frame_num()],
                 n_concurrent_workers: parseInt($("#n_concurrent_workers").val()),
-                patch,
+                template: {
+                    image: images[labeler.get_current_frame_num()],
+                    patch,
+                }
             };
 
             $("#toggle").html("...");
