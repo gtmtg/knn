@@ -17,8 +17,9 @@ from . import config
 
 # Increase maximum number of open sockets if necessary
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-if soft < config.DESIRED_ULIMIT:
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(config.DESIRED_ULIMIT, hard), hard))
+new_soft = min(config.DESIRED_ULIMIT, hard)
+if new_soft > soft:
+    resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
 class DatasetIterator:
