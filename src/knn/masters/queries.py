@@ -19,7 +19,7 @@ from . import config
 DESIRED_ULIMIT = 8192
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 if soft < DESIRED_ULIMIT:
-    resource.setrlimit(resource.RLIMIT_NOFILE, (DESIRED_ULIMIT, hard))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(DESIRED_ULIMIT, hard), hard))
 
 
 class DatasetIterator:
