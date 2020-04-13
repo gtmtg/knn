@@ -1,3 +1,4 @@
+IMAGE_BUCKET = "mihir-knn"
 IMAGE_LIST_PATH = "lvis_images.txt"
 
 DEMO_IMAGES = [
