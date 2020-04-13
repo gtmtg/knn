@@ -1,3 +1,4 @@
+IMAGE_BUCKET = "mihir-knn"
 IMAGE_LIST_PATH = "df2_images.txt"
 
 DEMO_IMAGES = [
