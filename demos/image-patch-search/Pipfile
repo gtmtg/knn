@@ -7,10 +7,9 @@ verify_ssl = true
 
 [packages]
 sanic = "*"
-aiohttp = "*"
-runstats = "*"
 jinja2 = "*"
 uvicorn = "*"
+knn = {editable = true,path = "./../.."}
 
 [requires]
 python_version = "3.7"

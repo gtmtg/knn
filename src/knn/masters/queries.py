@@ -2,29 +2,24 @@ import asyncio
 import collections
 from dataclasses import dataclass
 import heapq
+import resource
 import time
-import uuid
 
-from typing import Optional, Iterator, List, Any, Dict, Awaitable, Tuple
+# TODO(mihirg): Better type annotation everywhere Dict[str, Any] is used
+from typing import Optional, Iterator, List, Any, Dict, Awaitable, Tuple, Callable
 
 import aiohttp
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 from runstats import Statistics
-from sanic import Sanic
-from sanic.response import json, html, text
 
-import config
-import utils
+from . import utils
+from . import config
 
 
-# Start web server
-app = Sanic(__name__)
-app.static("/static", "./static")
-jinja = Environment(
-    loader=FileSystemLoader("./templates"), autoescape=select_autoescape(["html"]),
-)
-
-current_queries = {}  # type: Dict[str, ImageQuery]
+# Increase maximum number of open sockets if necessary
+DESIRED_ULIMIT = 8192
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+if soft < DESIRED_ULIMIT:
+    resource.setrlimit(resource.RLIMIT_NOFILE, (DESIRED_ULIMIT, hard))
 
 
 class DatasetIterator:
@@ -63,11 +58,9 @@ class ImageResult:
     image_name: str
     score_map: Optional[str] = None
 
-    # TODO(mihirg): Better type annotation
     def make_result_dict(self) -> Dict[str, Any]:
         result = {
             "image_name": self.image_name,
-            "image_url": f"{config.IMAGE_URL_PREFIX}{self.image_name}",
             "score": self.score,
         }
         if self.score_map:
@@ -75,25 +68,34 @@ class ImageResult:
         return result
 
 
-class ImageQuery:
+class ImageRankingQuery:
     def __init__(
         self,
-        query_id: str,
         n_concurrent_workers: int,
-        include_score_map: bool = True,
-        n_results_to_display: int = config.N_RESULTS_TO_DISPLAY,
-        file_list_path: str = config.IMAGE_LIST_PATH,
-        chunk_size: int = config.CHUNK_SIZE,
+        n_results_to_display: int,
+        handler_url: str,
+        bucket_name: str,
+        file_list_path: str,
+        on_finished_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
-        connector = aiohttp.TCPConnector(limit=0)  # no limit, make sure ulimit is high!
+        if not (
+            config.N_CONCURRENT_WORKERS_RANGE[0]
+            <= n_concurrent_workers
+            <= config.N_CONCURRENT_WORKERS_RANGE[1]
+        ):
+            raise ValueError("Invalid number of concurrent workers")
+
+        connector = aiohttp.TCPConnector(limit=0)
         self.session = aiohttp.ClientSession(connector=connector)
 
-        self.query_id = query_id
         self.n_concurrent_workers = n_concurrent_workers
+        self.handler_url = handler_url
 
-        self.include_score_map = include_score_map
-        self.chunk_size = chunk_size
-        self.dataset = DatasetIterator(file_list_path, chunk_size)
+        self.bucket_name = bucket_name
+        self.chunk_size = config.CHUNK_SIZE
+        self.dataset = DatasetIterator(file_list_path, self.chunk_size)
+
+        self.on_finished_callback = on_finished_callback
 
         self.total_time = Statistics()
         self.gcr_time = Statistics()
@@ -112,12 +114,10 @@ class ImageQuery:
         self.template: Optional[str] = None
         self.start_time: Optional[float] = None
         self.query_task: Optional[asyncio.Task] = None
-        self.cleanup_task: Optional[asyncio.Task] = None
 
-    # TODO(mihirg): Better type annotation
     async def set_template(self, template_request: Dict[str, Any]) -> bool:
         for i in range(config.N_TEMPLATE_ATTEMPTS):
-            endpoint = f"{config.HANDLER_URL}{config.TEMPLATE_ENDPOINT}"
+            endpoint = f"{self.handler_url}{config.TEMPLATE_ENDPOINT}"
             async with self.session.post(endpoint, json=template_request) as response:
                 if response.status == 200:
                     self.template = await response.text()
@@ -125,26 +125,43 @@ class ImageQuery:
         raise RuntimeError("Couldn't get template")
 
     async def start(self) -> None:
-        self.query_task = asyncio.create_task(self._run_query())
+        self.query_task = asyncio.create_task(self.run_until_complete())
+
+    async def run_until_complete(self) -> None:
+        try:
+            self.start_time = time.time()
+            for response_tuple in utils.limited_as_completed(
+                self._make_requests(), self.n_concurrent_workers
+            ):
+                request, result, elapsed_time = await response_tuple
+                self._update_results(request, result, elapsed_time)
+        except asyncio.CancelledError:
+            pass
+        else:
+            if self.on_finished_callback is not None:
+                self.on_finished_callback(self.get_results_dict())
+        finally:
+            await self.session.close()
 
     async def stop(self) -> None:
         if self.query_task is not None and not self.query_task.done():
             self.query_task.cancel()
             await self.query_task
-        if self.cleanup_task is not None and not self.cleanup_task.done():
-            self.cleanup_task.cancel()
-            await self.cleanup_task
-
-    async def _schedule_cleanup(self) -> None:
-        try:
-            await asyncio.sleep(config.QUERY_CLEANUP_TIME)
-            del current_queries[self.query_id]
-        except asyncio.CancelledError:
-            pass
 
     # REQUEST POOL
 
-    # TODO(mihirg): Better type annotation
+    def _make_requests(
+        self,
+    ) -> Iterator[Awaitable[Tuple[Dict[str, Any], Optional[Dict[str, Any]], float]]]:
+        for image_chunk in self.dataset:
+            yield self._request(
+                {
+                    "bucket": self.bucket_name,
+                    "images": image_chunk,
+                    "template": self.template,
+                }
+            )
+
     async def _request(
         self, request: Dict[str, Any]
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], float]:
@@ -157,7 +174,7 @@ class ImageQuery:
             end_time = start_time
 
             try:
-                endpoint = f"{config.HANDLER_URL}{config.INFERENCE_ENDPOINT}"
+                endpoint = f"{self.handler_url}{config.INFERENCE_ENDPOINT}"
                 async with self.session.post(endpoint, json=request) as response:
                     end_time = time.time()
                     if response.status == 200:
@@ -168,37 +185,8 @@ class ImageQuery:
 
         return request, result, end_time - start_time
 
-    # TODO(mihirg): Better type annotation
-    def _make_requests(
-        self,
-    ) -> Iterator[Awaitable[Tuple[Dict[str, Any], Optional[Dict[str, Any]], float]]]:
-        for image_chunk in self.dataset:
-            yield self._request(
-                {
-                    "template": self.template,
-                    "images": image_chunk,
-                    "include_score_map": self.include_score_map,
-                }
-            )
-
-    async def _run_query(self) -> None:
-        try:
-            self.start_time = time.time()
-            for response_tuple in utils.limited_as_completed(
-                self._make_requests(), self.n_concurrent_workers
-            ):
-                request, result, elapsed_time = await response_tuple
-                self._update_results(request, result, elapsed_time)
-        except asyncio.CancelledError:
-            pass
-        else:
-            self.cleanup_task = asyncio.create_task(self._schedule_cleanup())
-        finally:
-            await self.session.close()
-
     # RESULT COMPILATION
 
-    # TODO(mihirg): Better type annotation
     def _update_results(
         self,
         chunk_request: Dict[str, Any],
@@ -231,7 +219,6 @@ class ImageQuery:
             elif result > self.results[0]:
                 heapq.heapreplace(self.results, result)
 
-    # TODO(mihirg): Better type annotation
     def get_results_dict(self) -> Dict[str, Any]:
         elapsed_time = (time.time() - self.start_time) if self.start_time else 0
         return {
@@ -264,56 +251,3 @@ class ImageQuery:
     @property
     def finished(self) -> bool:
         return self.n_processed + self.n_skipped >= self.dataset.n_total
-
-
-@app.route("/")
-async def homepage(request):
-    template = jinja.get_template("index.html")
-    response = template.render(
-        n_concurrent_workers=config.N_CONCURRENT_WORKERS_RANGE[1],  # default
-        running=bool(current_queries),
-        demo_images=config.DEMO_IMAGES,
-        image_url_prefix=config.IMAGE_URL_PREFIX,
-    )
-    return html(response)
-
-
-@app.route("/start", methods=["POST"])
-async def start(request):
-    n_concurrent_workers = request.json.get(
-        "n_concurrent_workers", config.N_CONCURRENT_WORKERS_RANGE[1]  # default
-    )
-    assert (
-        config.N_CONCURRENT_WORKERS_RANGE[0]
-        <= n_concurrent_workers
-        <= config.N_CONCURRENT_WORKERS_RANGE[2]
-    )
-    query_id = str(uuid.uuid4())
-    query = ImageQuery(query_id, n_concurrent_workers)
-    current_queries[query_id] = query
-
-    await query.set_template(request.json["template"])
-    await query.start()
-
-    return json({"query_id": query_id})
-
-
-@app.route("/results", methods=["GET"])
-async def get_results(request):
-    query_id = request.args["query_id"][0]
-    query = current_queries[query_id]
-    if query.finished:
-        del current_queries[query_id]
-        await query.stop()
-    return json(query.get_results_dict())
-
-
-@app.route("/stop", methods=["PUT"])
-async def stop(request):
-    query_id = request.json["query_id"]
-    await current_queries.pop(query_id).stop()
-    return text("", status=204)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)

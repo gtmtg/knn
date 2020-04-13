@@ -165,17 +165,17 @@
             let bbox = annotations[0].bbox;
             let source_image = labeler.get_current_frame().source_image;
             let patch = [
-                // coordinates from klabel are in normalized [0,1]^2 space,
-                // so convert to a pixel-space bounding box.
-                source_image.naturalWidth  * bbox.bmin.x, // x1
-                source_image.naturalHeight * bbox.bmin.y, // y1
-                source_image.naturalWidth  * bbox.bmax.x, // x2
-                source_image.naturalHeight * bbox.bmax.y, // y2
+                // coordinates in normalized [0,1]^2 space,
+                bbox.bmin.x, // x1
+                bbox.bmin.y, // y1
+                bbox.bmax.x, // x2
+                bbox.bmax.y, // y2
             ];
             let payload = {
                 n_concurrent_workers: parseInt($("#n_concurrent_workers").val()),
                 template: {
                     image: images[labeler.get_current_frame_num()],
+                    bucket: {{ image_bucket|tojson }},
                     patch,
                 }
             };
@@ -214,10 +214,15 @@
         if (results.length > 0) {
             let rank = 1;
             for (const result of results) {
-                result_html += `<div>`;
+                result_html += '<div>';
                 result_html += '<div>'
                 result_html += `(${rank}) ${result['image_name']}, score=${Number.parseFloat(result['score']).toFixed(6)}`;
-                result_html += `<div><img src="${result['image_url']}" width="250" /><img src="data:image/jpeg;base64,${result['score_map']}" width="250" /></div>`;
+                result_html += '<div>';
+                result_html += `<img src="${image_url_prefix}${result['image_name']}" width="250" />`;
+                if ('score_map' in result) {
+                    result_html += `<img src="data:image/jpeg;base64,${result['score_map']}" width="250" />`;
+                }
+                result_html += `</div>`;
                 result_html += `</div>`;
                 result_html += `</div>`;
                 rank++;

@@ -14,12 +14,15 @@ import numpy as np
 from PIL import Image
 import torch
 
+from detectron2.layers import ShapeSpec
+from detectron2.checkpoint.detection_checkpoint import DetectionCheckpointer
+from detectron2.modeling.backbone.resnet import build_resnet_backbone
+
 import config
 
 
 # Set up Google Cloud clients
 storage_client = storage.Client()
-storage_bucket = storage_client.bucket(config.CLOUD_STORAGE_BUCKET)
 
 
 # Lazy load model
@@ -33,21 +36,19 @@ def ensure_globals(f):
 
         global model
         if not model:
-            from detectron2.layers import ShapeSpec
-            from detectron2.checkpoint.detection_checkpoint import DetectionCheckpointer
-            from detectron2.modeling.backbone.resnet import build_resnet_backbone
-
             # Download model weights
             pathlib.Path(config.MODEL_LOCAL_PATH).parent.mkdir(
                 parents=True, exist_ok=True
             )
-            model_blob = storage_bucket.blob(config.MODEL_CLOUD_PATH)
-            model_blob.download_to_filename(config.MODEL_LOCAL_PATH)
+            with open(config.MODEL_LOCAL_PATH, "wb") as model_file:
+                storage_client.download_blob_to_file(
+                    config.MODEL_CLOUD_PATH, model_file
+                )
 
             # Create model
             shape = ShapeSpec(channels=3)
             model = torch.nn.Sequential(
-                build_resnet_backbone(config.get_resnet_config(), shape)
+                build_resnet_backbone(config.RESNET_CONFIG, shape)
             )
 
             # Load model weights
@@ -82,19 +83,18 @@ def handler(start_time):
         "images": collections.defaultdict(dict),
     }
 
-    for image_cloud_path in event["images"]:
+    for image_name in event["images"]:
         try:
-            image = download_image(image_cloud_path)
+            image = download_image(f"gs://{event['bucket']}/{image_name}")
 
             compute_start_time = time.time()
             result = run_inference(image)
             score_map, score = compute_knn_score(result, template)
             results["compute_time"] += time.time() - compute_start_time
 
-            results["images"][image_cloud_path]["score"] = score
-            if event.get("include_score_map"):
-                score_map_base64 = float_map_to_base64_png(score_map)
-                results["images"][image_cloud_path]["score_map"] = score_map_base64
+            results["images"][image_name]["score"] = score
+            score_map_base64 = float_map_to_base64_png(score_map)
+            results["images"][image_name]["score_map"] = score_map_base64
         except AssertionError:
             pass
 
@@ -109,12 +109,16 @@ def handler(start_time):
 def get_template(start_time):
     event = request.get_json()
 
-    image = download_image(event["image"])
+    image = download_image(f"gs://{event['bucket']}/{event['image']}")
     result = run_inference(image)
 
     x1, y1, x2, y2 = event["patch"]
-    x1, y1 = [math.floor(dim / config.RESNET_DOWNSAMPLE_FACTOR) for dim in (x1, y1)]
-    x2, y2 = [math.ceil(dim / config.RESNET_DOWNSAMPLE_FACTOR) for dim in (x2, y2)]
+    _, h, w = result.size()
+
+    x1 = math.floor(x1 * w)
+    y1 = math.floor(y1 * h)
+    x2 = math.ceil(x2 * w)
+    y2 = math.ceil(y2 * h)
 
     embedding = result[:, y1:y2, x1:x2].mean(dim=-1).mean(dim=-1)
     embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
@@ -123,8 +127,7 @@ def get_template(start_time):
 
 def download_image(image_cloud_path):
     image_buffer = io.BytesIO()
-    image_blob = storage_bucket.blob(image_cloud_path)
-    image_blob.download_to_file(image_buffer)
+    storage_client.download_blob_to_file(image_cloud_path, image_buffer)
     image = Image.open(image_buffer)
     image = image_to_tensor(image)
     image_buffer.close()
@@ -147,17 +150,15 @@ def image_to_tensor(image):
         image = torch.as_tensor(image).permute(2, 0, 1).unsqueeze(dim=0)
 
         # RGB -> BGR
-        if config.get_resnet_config().INPUT.FORMAT == "BGR":
+        if config.RESNET_CONFIG.INPUT.FORMAT == "BGR":
             image = torch.flip(image, dims=(1,))
         image = image.contiguous()
 
         # Normalize
-        pixel_mean = torch.Tensor(config.get_resnet_config().MODEL.PIXEL_MEAN).view(
+        pixel_mean = torch.Tensor(config.RESNET_CONFIG.MODEL.PIXEL_MEAN).view(
             1, -1, 1, 1
         )
-        pixel_std = torch.Tensor(config.get_resnet_config().MODEL.PIXEL_STD).view(
-            1, -1, 1, 1
-        )
+        pixel_std = torch.Tensor(config.RESNET_CONFIG.MODEL.PIXEL_STD).view(1, -1, 1, 1)
         return (image - pixel_mean) / pixel_std
 
 
@@ -181,7 +182,10 @@ def serialize(tensor):
 
 def float_map_to_base64_png(float_map):
     def rescale(x):
-        return (x - x.min()) / (x.max() - x.min())
+        clamped = torch.clamp(x, config.MIN_VIZ_SCORE, config.MAX_VIZ_SCORE)
+        return (clamped - config.MIN_VIZ_SCORE) / (
+            config.MAX_VIZ_SCORE - config.MIN_VIZ_SCORE
+        )
 
     with torch.no_grad():
         float_map = 255 * rescale(float_map)
