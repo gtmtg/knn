@@ -1,0 +1,1 @@
+https://storage.googleapis.com/mihir-knn/models/R-50.pkl

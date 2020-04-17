@@ -36,15 +36,6 @@ def ensure_globals(f):
 
         global model
         if not model:
-            # Download model weights
-            pathlib.Path(config.MODEL_LOCAL_PATH).parent.mkdir(
-                parents=True, exist_ok=True
-            )
-            with open(config.MODEL_LOCAL_PATH, "wb") as model_file:
-                storage_client.download_blob_to_file(
-                    config.MODEL_CLOUD_PATH, model_file
-                )
-
             # Create model
             shape = ShapeSpec(channels=3)
             model = torch.nn.Sequential(
@@ -55,9 +46,6 @@ def ensure_globals(f):
             checkpointer = DetectionCheckpointer(model, save_to_disk=False)
             checkpointer.load(config.MODEL_LOCAL_PATH)
             model.eval()
-
-            # Delete weights file to free up memory
-            os.remove(config.MODEL_LOCAL_PATH)
 
         return f(*args, **kwargs)
 
@@ -123,6 +111,13 @@ def get_template(start_time):
     embedding = result[:, y1:y2, x1:x2].mean(dim=-1).mean(dim=-1)
     embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
     return serialize(embedding)
+
+
+@app.route("/delay", methods=["POST"])
+def delay():
+    delay = float(request.get_json()["delay"])
+    time.sleep(delay)
+    return request.get_json()
 
 
 def download_image(image_cloud_path):

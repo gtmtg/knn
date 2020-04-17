@@ -1,7 +1,6 @@
 from detectron2.config.config import get_cfg as get_default_detectron_config
 
-MODEL_CLOUD_PATH = "gs://mihir-knn/models/R-50.pkl"
-MODEL_LOCAL_PATH = "/tmp/knn/R-50.pkl"
+MODEL_LOCAL_PATH = "R-50.pkl"  # model will be downloaded here
 
 N_DISTANCES_TO_AVERAGE = 50
 SERIALIZE_DTYPE = "float32"
