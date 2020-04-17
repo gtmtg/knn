@@ -17,7 +17,7 @@ RUN wget -i resources.txt
 
 # Clean up build dependencies.
 RUN grep -F -x -v -f requirements.txt requirements-build.txt | pip uninstall -y -r /dev/stdin \
-    && apt-get purge -y --auto-remove gcc python3.7-dev
+    && apt-get purge -y --auto-remove gcc python3.7-dev wget
 
 # Run the web service on container startup.
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 1 handler:app
