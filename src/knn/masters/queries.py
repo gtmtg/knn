@@ -8,7 +8,17 @@ import resource
 import time
 
 # TODO(mihirg): Better type annotation everywhere Dict[str, Any] is used
-from typing import Optional, Iterator, List, Any, Dict, Awaitable, Tuple, Callable
+from typing import (
+    Optional,
+    Iterator,
+    List,
+    Any,
+    Dict,
+    Awaitable,
+    Tuple,
+    Callable,
+    Iterable,
+)
 
 import aiohttp
 from runstats import Statistics
@@ -117,9 +127,9 @@ class ImageRankingQuery:
         self.start_time: Optional[float] = None
         self.query_task: Optional[asyncio.Task] = None
 
-    def set_template(self, template: List[float]) -> None:
+    def set_template(self, template: Iterable[float]) -> None:
         packed = array.array("f")
-        packed.fromlist(template)
+        packed.extend(template)
         self.template = base64.b64encode(packed.tobytes()).decode("utf-8")
 
     async def get_template(self, template_request: Dict[str, Any]) -> bool:
