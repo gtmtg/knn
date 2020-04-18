@@ -1,4 +1,6 @@
+import array
 import asyncio
+import base64
 import collections
 from dataclasses import dataclass
 import heapq
@@ -115,7 +117,12 @@ class ImageRankingQuery:
         self.start_time: Optional[float] = None
         self.query_task: Optional[asyncio.Task] = None
 
-    async def set_template(self, template_request: Dict[str, Any]) -> bool:
+    def set_template(self, template: List[float]) -> None:
+        packed = array.array("f")
+        packed.fromlist(template)
+        self.template = base64.b64encode(packed.tobytes()).decode("utf-8")
+
+    async def get_template(self, template_request: Dict[str, Any]) -> bool:
         for i in range(config.N_TEMPLATE_ATTEMPTS):
             endpoint = f"{self.handler_url}{config.TEMPLATE_ENDPOINT}"
             async with self.session.post(endpoint, json=template_request) as response:
