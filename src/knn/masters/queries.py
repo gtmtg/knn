@@ -132,7 +132,7 @@ class ImageRankingQuery:
         packed.extend(template)
         self.template = base64.b64encode(packed.tobytes()).decode("utf-8")
 
-    async def get_template(self, template_request: Dict[str, Any]) -> bool:
+    async def fetch_template(self, template_request: Dict[str, Any]) -> bool:
         for i in range(config.N_TEMPLATE_ATTEMPTS):
             endpoint = f"{self.handler_url}{config.TEMPLATE_ENDPOINT}"
             async with self.session.post(endpoint, json=template_request) as response:

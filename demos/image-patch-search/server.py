@@ -49,7 +49,7 @@ async def start(request):
     )
     current_queries[query_id] = query
 
-    await query.get_template(request.json["template"])
+    await query.fetch_template(request.json["template"])
     await query.start()
 
     return json({"query_id": query_id})
