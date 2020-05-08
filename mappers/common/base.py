@@ -25,8 +25,8 @@ class ResNetBackboneMapper(Mapper):
         torch.set_grad_enabled(False)
 
         # Store relevant attributes of config
-        pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(1, -1, 1, 1)
-        pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).view(1, -1, 1, 1)
+        pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1)
+        pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1)
         self.normalize = lambda image: (image - pixel_mean) / pixel_std
         self.input_format = cfg.INPUT.FORMAT
 
