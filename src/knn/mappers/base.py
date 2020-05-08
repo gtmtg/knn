@@ -114,3 +114,5 @@ class Mapper(abc.ABC):
             except AssertionError:
                 pass
             return None
+
+        return wrapper
