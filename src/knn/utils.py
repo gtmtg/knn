@@ -50,7 +50,7 @@ def numpy_to_base64(nda):
     with io.BytesIO() as nda_buffer:
         np.save(nda_buffer, nda, allow_pickle=False)
         nda_bytes = nda_buffer.getvalue()
-        nda_base64 = base64.b64_encode(nda_bytes)
+        nda_base64 = base64.b64encode(nda_bytes)
     return nda_base64
 
 
