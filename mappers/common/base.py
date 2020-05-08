@@ -1,12 +1,13 @@
 import io
 
-from detectron2.layers import ShapeSpec
-from detectron2.checkpoint.detection_checkpoint import DetectionCheckpointer
-from detectron2.modeling.backbone.resnet import build_resnet_backbone
 from gcloud.aio.storage import Storage
 import numpy as np
 from PIL import Image
 import torch
+
+from detectron2.layers import ShapeSpec
+from detectron2.checkpoint.detection_checkpoint import DetectionCheckpointer
+from detectron2.modeling.backbone.resnet import build_resnet_backbone
 
 from knn.mappers import Mapper
 
