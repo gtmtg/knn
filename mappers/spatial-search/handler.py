@@ -16,7 +16,9 @@ class SpatialSearchMapper(ResNetBackboneMapper):
     async def parse_args(self, args):
         return {
             **args,
-            "template": utils.base64_to_numpy(args["template"]).unsqueeze(0),
+            "template": torch.as_tensor(
+                utils.base64_to_numpy(args["template"])
+            ).unsqueeze(0),
         }
 
     @Mapper.AssertionErrorTolerant
