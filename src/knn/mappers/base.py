@@ -55,9 +55,9 @@ class Mapper(abc.ABC):
         return await self._server(*args, **kwargs)
 
     async def _sleep(self, request):
-        delay = float(request.get_json()["delay"])
+        delay = float(request.json["delay"])
         asyncio.sleep(delay)
-        return request.get_json()
+        return request.json
 
     async def _handle_request(self, request):
         init_time = self._init_time
@@ -66,13 +66,12 @@ class Mapper(abc.ABC):
         request_id = str(uuid.uuid4())
         with self.profiler(request_id, "billed_time", additional=init_time):
             with self.profiler(request_id, "request_time"):
-                request = request.get_json()
-                job_id = request["job_id"]
+                job_id = request.json["job_id"]
                 args = self.job_args.setdefault(
-                    job_id, await self.parse_args(request["args"])
+                    job_id, await self.parse_args(request.json["args"])
                 )
                 outputs = await self.process_batch(
-                    request["inputs"], job_id, args, request_id
+                    request.json["inputs"], job_id, args, request_id
                 )
 
         return json(
