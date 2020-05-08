@@ -12,7 +12,7 @@ from knn.mappers import Mapper
 
 
 class ResNetBackboneMapper(Mapper):
-    def prepare_container(self, cfg, weights_path):
+    def initialize_container(self, cfg, weights_path):
         # Create model
         shape = ShapeSpec(channels=3)
         self.model = torch.nn.Sequential(build_resnet_backbone(self.cfg, shape))
