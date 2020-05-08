@@ -199,9 +199,10 @@
 
         console.log(data);
 
-        update_results(data.results);
-        update_performance_stats(data.stats);
-        update_worker_info(data.workers);
+        update_results(data.result);
+        update_progress(data.progress);
+        update_performance(data.performance);
+        update_workers(data.perormance.workers);
 
         if (!data.running) end_query();  // stop when query is complete
     };
@@ -216,11 +217,11 @@
             for (const result of results) {
                 result_html += '<div>';
                 result_html += '<div>'
-                result_html += `(${rank}) ${result['image_name']}, score=${Number.parseFloat(result['score']).toFixed(6)}`;
+                result_html += `(${rank}) ${result[1]}, score=${Number.parseFloat(result[0]).toFixed(6)}`;
                 result_html += '<div>';
                 result_html += `<img src="${image_url_prefix}${result['image_name']}" width="250" />`;
                 if ('score_map' in result) {
-                    result_html += `<img src="data:image/jpeg;base64,${result['score_map']}" width="250" />`;
+                    result_html += `<img src="${image_url_prefix}${result['image_name'].png}" width="250" />`;
                 }
                 result_html += `</div>`;
                 result_html += `</div>`;
@@ -290,7 +291,7 @@
         prev_stats = stats;
     };
 
-    const update_worker_info = (workers) => {
+    const update_workers = (workers) => {
         if (!workers) return;
 
         // # of chunks per worker histogram
