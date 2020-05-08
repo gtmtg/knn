@@ -51,8 +51,8 @@ class Mapper(abc.ABC):
 
         self._init_time = time.time() - init_start_time
 
-    def __call__(self, *args, **kwargs):
-        return self._server(*args, **kwargs)
+    async def __call__(self, *args, **kwargs):
+        return await self._server(*args, **kwargs)
 
     async def _sleep(self, request):
         delay = float(request.get_json()["delay"])

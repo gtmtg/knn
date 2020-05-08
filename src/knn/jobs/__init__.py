@@ -1,1 +1,1 @@
-from jobs import InputSequence, MapReduceJob
+from .jobs import InputSequence, MapReduceJob

@@ -103,10 +103,7 @@ async def get_results(request):
     query_job = current_queries[query_id]
     if query_job.finished:
         current_queries.pop(query_id)
-
-    job_result = query_job.job_result
-    job_result["result"] = [r._asdict() for r in job_result["result"]]  # make JSON-able
-    return json(job_result)
+    return json(query_job.job_result)
 
 
 @app.route("/stop", methods=["PUT"])

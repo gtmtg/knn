@@ -1,2 +1,2 @@
-from base import Reducer
-from reducers import TopKReducer, PoolingReducer
+from .base import Reducer
+from .reducers import TopKReducer, PoolingReducer

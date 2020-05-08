@@ -1,1 +1,1 @@
-from base import Mapper
+from .base import Mapper
