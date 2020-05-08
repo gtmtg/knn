@@ -56,7 +56,7 @@ class Mapper(abc.ABC):
 
     async def _sleep(self, request):
         delay = float(request.json["delay"])
-        asyncio.sleep(delay)
+        await asyncio.sleep(delay)
         return json(request.json)
 
     async def _handle_request(self, request):
