@@ -16,7 +16,7 @@ class ResNetBackboneMapper(Mapper):
     def initialize_container(self, cfg, weights_path):
         # Create model
         shape = ShapeSpec(channels=3)
-        self.model = torch.nn.Sequential(build_resnet_backbone(self.cfg, shape))
+        self.model = torch.nn.Sequential(build_resnet_backbone(cfg, shape))
 
         # Load model weights
         checkpointer = DetectionCheckpointer(self.model, save_to_disk=False)
