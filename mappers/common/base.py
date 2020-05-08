@@ -44,7 +44,7 @@ class ResNetBackboneMapper(Mapper):
 
     async def download_and_process_image(self, image_bucket, image_path, request_id):
         # Download image
-        image_bytes = await self.storage.download(image_bucket, image_path)
+        image_bytes = await self.storage_client.download(image_bucket, image_path)
         with io.BytesIO(image_bytes) as image_buffer:
             image = self.preprocess_image(Image.open(image_buffer))
 

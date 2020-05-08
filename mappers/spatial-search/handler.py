@@ -53,7 +53,7 @@ class SpatialSearchMapper(ResNetBackboneMapper):
         with io.BytesIO() as image_buffer:
             image.save(image_buffer, "jpeg")
             image_buffer.seek(0)
-            await self.storage.upload(bucket, path, image_buffer)
+            await self.storage_client.upload(bucket, path, image_buffer)
 
     @staticmethod
     def compute_knn_score(embeddings, template, n_distances):
