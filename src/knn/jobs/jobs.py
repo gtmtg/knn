@@ -40,7 +40,7 @@ class MapReduceJob:
         *,
         n_mappers: int = defaults.N_MAPPERS,
         n_retries: int = defaults.N_RETRIES,
-        batch_size: int = defaults.BATCH_SIZE,
+        chunk_size: int = defaults.CHUNK_SIZE,
     ) -> None:
         assert n_mappers < new_soft
 
@@ -48,7 +48,7 @@ class MapReduceJob:
 
         self.n_mappers = n_mappers
         self.n_retries = n_retries
-        self.batch_size = batch_size
+        self.chunk_size = chunk_size
         self.mapper_url = mapper_url
         self.mapper_args = mapper_args
 
@@ -93,12 +93,12 @@ class MapReduceJob:
             self.start_time = time.time()
             for response_tuple in utils.limited_as_completed(
                 (
-                    self._request(session, batch)
-                    for batch in utils.chunk(iterable, self.batch_size)
+                    self._request(session, chunk)
+                    for chunk in utils.chunk(iterable, self.chunk_size)
                 ),
                 self.n_mappers,
             ):
-                self._handle_batch_result(*(await response_tuple))
+                self._handle_chunk_result(*(await response_tuple))
 
         if self._n_total is None:
             self._n_total = self._n_successful + self._n_failed
@@ -160,21 +160,21 @@ class MapReduceJob:
 
     # INTERNAL
 
-    def _construct_request(self, batch: List[JSONType]) -> JSONType:
+    def _construct_request(self, chunk: List[JSONType]) -> JSONType:
         return {
             "job_id": self.job_id,
-            "args": self.mapper_args,
-            "inputs": batch,
+            "job_args": self.mapper_args,
+            "inputs": chunk,
         }
 
     async def _request(
-        self, session: aiohttp.ClientSession, batch: List[JSONType]
+        self, session: aiohttp.ClientSession, chunk: List[JSONType]
     ) -> Tuple[JSONType, Optional[JSONType], float]:
         result = None
         start_time = 0.0
         end_time = 0.0
 
-        request = self._construct_request(batch)
+        request = self._construct_request(chunk)
 
         for i in range(self.n_retries):
             start_time = time.time()
@@ -189,28 +189,29 @@ class MapReduceJob:
             except aiohttp.ClientConnectionError:
                 break
 
-        return batch, result, end_time - start_time
+        return chunk, result, end_time - start_time
 
-    def _handle_batch_result(
-        self, batch: List[JSONType], result: Optional[JSONType], elapsed_time: float
+    def _handle_chunk_result(
+        self, chunk: List[JSONType], result: Optional[JSONType], elapsed_time: float
     ):
         self._n_requests += 1
 
         if not result:
-            self._n_failed += len(batch)
+            self._n_failed += len(chunk)
             return
 
         # Validate
-        assert len(result["outputs"]) == len(batch)
+        assert len(result["outputs"]) == len(chunk)
         assert "billed_time" in result["profiling"]
 
         n_successful = sum(1 for r in result["outputs"] if r)
         self._n_successful += n_successful
-        self._n_failed += len(batch) - n_successful
+        self._n_failed += len(chunk) - n_successful
         self._n_chunks_per_mapper[result["worker_id"]] += 1
 
         for k, v in result["profiling"].items():
             self._profiling[k].push(v)
 
-        for input, output in zip(batch, result["outputs"]):
-            self.reducer.handle_result(input, output)
+        for input, output in zip(chunk, result["outputs"]):
+            if output:
+                self.reducer.handle_result(input, output)

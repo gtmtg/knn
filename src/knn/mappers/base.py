@@ -31,17 +31,57 @@ class Profiler:
 
 
 class Mapper(abc.ABC):
+    # BASE CLASS
+
+    def initialize_container(self, *args, **kwargs) -> None:
+        pass
+
+    async def initialize_job(self, job_args: JSONType) -> Any:
+        return job_args
+
+    async def process_chunk(
+        self, batch: List[JSONType], job_id: str, job_args: Any, request_id: str
+    ) -> List[JSONType]:
+        return await asyncio.gather(
+            *[
+                self.process_element(input, job_id, job_args, request_id)
+                for input in batch
+            ]
+        )
+
+    @abc.abstractmethod
+    async def process_element(
+        self, input: JSONType, job_id: str, job_args: Any, request_id: str
+    ) -> JSONType:
+        pass
+
+    # DECORATORS
+
+    @staticmethod
+    def AssertionErrorTolerant(f):
+        @functools.wraps(f)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await f(*args, **kwargs)
+            except AssertionError:
+                pass
+            return None
+
+        return wrapper
+
     # INTERNAL
 
     def __init__(self, *args, **kwargs):
         init_start_time = time.time()
 
         self.worker_id = str(uuid.uuid4())
-        self.job_args: Dict[str, Any] = {}
-        self.request_profiling: Dict[str, Dict[str, float]] = collections.defaultdict(
-            lambda: collections.defaultdict(float)
+        self._args_by_job: Dict[str, Any] = {}
+        self._profiling_results_by_request: Dict[
+            str, Dict[str, float]
+        ] = collections.defaultdict(lambda: collections.defaultdict(float))
+        self.profiler = functools.partial(
+            Profiler, results_dict=self._profiling_results_by_request
         )
-        self.profiler = functools.partial(Profiler, results_dict=self.request_profiling)
 
         self.initialize_container(*args, **kwargs)
 
@@ -67,52 +107,17 @@ class Mapper(abc.ABC):
         with self.profiler(request_id, "billed_time", additional=init_time):
             with self.profiler(request_id, "request_time"):
                 job_id = request.json["job_id"]
-                args = self.job_args.setdefault(
-                    job_id, await self.parse_args(request.json["args"])
+                job_args = self._args_by_job.setdefault(
+                    job_id, await self.initialize_job(request.json["job_args"])
                 )
                 outputs = await self.process_batch(
-                    request.json["inputs"], job_id, args, request_id
+                    request.json["inputs"], job_id, job_args, request_id
                 )
 
         return json(
             {
                 "worker_id": self.worker_id,
-                "profiling": self.request_profiling.pop(request_id),
+                "profiling": self._profiling_results_by_request.pop(request_id),
                 "outputs": outputs,
             }
         )
-
-    # BASE CLASS
-
-    def initialize_container(self, *args, **kwargs) -> None:
-        pass
-
-    async def parse_args(self, args: JSONType) -> Any:
-        return args
-
-    async def process_batch(
-        self, batch: List[JSONType], job_id: str, args: Any, request_id: str
-    ) -> List[JSONType]:
-        return await asyncio.gather(
-            *[self.process_input(input, job_id, args, request_id) for input in batch]
-        )
-
-    @abc.abstractmethod
-    async def process_input(
-        self, input: JSONType, job_id: str, args: Any, request_id: str
-    ) -> JSONType:
-        pass
-
-    # DECORATORS
-
-    @staticmethod
-    def AssertionErrorTolerant(f):
-        @functools.wraps(f)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await f(*args, **kwargs)
-            except AssertionError:
-                pass
-            return None
-
-        return wrapper
