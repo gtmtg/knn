@@ -1,5 +1,18 @@
 import asyncio
+import base64
+import io
 import itertools
+
+import numpy as np
+
+from typing import (
+    Any,
+    List,
+    Union,
+    Dict,
+)
+
+JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
 
 def limited_as_completed(coros, limit):
@@ -22,3 +35,27 @@ def limited_as_completed(coros, limit):
 
     while pending[0] > 0:
         yield first_to_finish()
+
+
+def chunk(iterable, chunk_size):
+    it = iter(iterable)
+    while True:
+        chunk = tuple(itertools.islice(it, chunk_size))
+        if not chunk:
+            break
+        yield chunk
+
+
+def numpy_to_base64(nda):
+    with io.BytesIO() as nda_buffer:
+        np.save(nda_buffer, nda, allow_pickle=False)
+        nda_bytes = nda_buffer.getvalue()
+        nda_base64 = base64.b64encode(nda_bytes).decode("ascii")
+    return nda_base64
+
+
+def base64_to_numpy(nda_base64):
+    nda_bytes = base64.b64decode(nda_base64)
+    with io.BytesIO(nda_bytes) as nda_buffer:
+        nda = np.load(nda_buffer, allow_pickle=False)
+    return nda

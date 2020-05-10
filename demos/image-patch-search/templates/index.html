@@ -23,7 +23,7 @@
                 <div class="col-3">
                     <div id="stats" style="display: none;">
                         <b>Throughput:</b>
-                        <hr size="1" style="color: d0d0d0;" />
+                        <hr size="1" />
 
                         <section id="elapsed_time">
                             <div id="text"></div>
@@ -45,7 +45,7 @@
                         </section>
 
                         <b>Cost:</b>
-                        <hr size="1" style="color: d0d0d0;" />
+                        <hr size="1" />
 
                         <section id="total_cost">
                             <div id="text"></div>
@@ -56,13 +56,13 @@
                         </section>
 
                         <b>Perf Analysis:</b>
-                        <hr size="1" style="color: d0d0d0;" />
+                        <hr size="1" />
 
                         <section id="time_breakdown"></section>
-                    </div>
 
-                    <div id="workers" style="display: none;">
                         <b>Workers:</b>
+                        <hr size="1" />
+
                         <section id="worker_distribution"></section>
                     </div>
                 </div>
@@ -76,7 +76,7 @@
     <script type="text/javascript" src="static/klabel.js"></script>
     <script type="text/javascript">
     // Labeler
-    const image_url_prefix = {{ image_url_prefix|tojson }};
+    const image_url_prefix = `https://storage.googleapis.com/{{ image_bucket }}/`;
     const images = {{ demo_images|tojson }};
 
     var labeler = new ImageLabeler;
@@ -118,15 +118,13 @@
     let poll;
 
     let query_id = null;
-    let prev_stats = {};
-    let prev_workers = {};
+    let prev_progress = {};
 
     const start_query = (new_query_id) => {
         query_id = new_query_id;
         $("#toggle").html("Stop");
         $("#results").empty();
         $("#stats").show();
-        $("#workers").show();
 
         // Repeatedly poll for updated results from server
         poll = setInterval(
@@ -138,8 +136,7 @@
     const end_query = () => {
         query_id = null;
         $("#toggle").html("Start");
-        prev_stats = {};
-        prev_workers = {};
+        prev_progress = {};
         clearInterval(poll);
     }
 
@@ -175,7 +172,6 @@
                 n_concurrent_workers: parseInt($("#n_concurrent_workers").val()),
                 template: {
                     image: images[labeler.get_current_frame_num()],
-                    bucket: {{ image_bucket|tojson }},
                     patch,
                 }
             };
@@ -194,21 +190,20 @@
 
     // Results
 
+    google.charts.load("current", {"packages":["corechart"]});
+
     const handle_results = (data) => {
         if (!query_id) return;
 
-        console.log(data);
+        update_results(data.result);
+        update_progress(data.progress);
+        update_profiling(data.performance.profiling);
+        update_workers(data.performance.mapper_utilization);
 
-        update_results(data.results);
-        update_performance_stats(data.stats);
-        update_worker_info(data.workers);
-
-        if (!data.running) end_query();  // stop when query is complete
+        if (data.progress.finished) end_query();  // stop when query is complete
     };
 
     const update_results = (results) => {
-        if (!results) return;
-
         let result_html = "";
 
         if (results.length > 0) {
@@ -216,12 +211,10 @@
             for (const result of results) {
                 result_html += '<div>';
                 result_html += '<div>'
-                result_html += `(${rank}) ${result['image_name']}, score=${Number.parseFloat(result['score']).toFixed(6)}`;
+                result_html += `(${rank}) ${result["input"]}, score=${Number.parseFloat(result["score"]).toFixed(6)}`;
                 result_html += '<div>';
-                result_html += `<img src="${image_url_prefix}${result['image_name']}" width="250" />`;
-                if ('score_map' in result) {
-                    result_html += `<img src="data:image/jpeg;base64,${result['score_map']}" width="250" />`;
-                }
+                result_html += `<img src="${image_url_prefix}${result["input"]}" width="250" />`;
+                result_html += `<img src="${image_url_prefix}${result["output"]["score_map_path"]}" width="250" />`;
                 result_html += `</div>`;
                 result_html += `</div>`;
                 result_html += `</div>`;
@@ -232,53 +225,45 @@
         }
 
         $("#results").html(result_html);
-    }
+    };
 
-    // Performance analytics
+    const update_progress = (progress) => {
+        progress.ts = (new Date()).getTime();
 
-    google.charts.load("current", {"packages":["corechart"]});
+        update_stat_no_bar("elapsed_time", `Elapsed time: ${Math.round(progress.elapsed_time)} sec`);
 
-    const update_performance_stats = (stats) => {
-        if (!stats) return;
-        stats.ts = (new Date()).getTime();
-
-        // total cost of computation
-        update_stat_no_bar("elapsed_time", `Elapsed time: ${Math.round(stats.elapsed_time)} sec`);
-
-        // Progress
         update_stat("progress",
-                    `Processed ${stats.n_processed + stats.n_skipped} of ${stats.n_total} <br /> (skipped ${stats.n_skipped})`,
-                    stats.n_processed + stats.n_skipped,
-                    stats.n_total);
+            `Processed ${progress.n_processed + progress.n_skipped} of ${progress.n_total} <br /> (skipped ${progress.n_skipped})`,
+            progress.n_processed + progress.n_skipped,
+            progress.n_total);
 
-        // Images per second (overall)
-        let images_per_second_avg = stats.n_processed / stats.elapsed_time;
+        let images_per_second_avg = progress.n_processed / progress.elapsed_time;
         update_stat("images_per_second_avg",
                     `${images_per_second_avg.toFixed(1)} img/sec (overall)`,
                     images_per_second_avg,
                     100);
 
-        // Images per second (recent)
-        let images_per_second = make_derivative(stats, prev_stats, "images_per_second", (s) => s.n_processed);
+        let images_per_second = make_derivative(progress, prev_progress, "images_per_second", (s) => s.n_processed);
         update_stat("images_per_second",
                     `${images_per_second.toFixed(1)} img/sec (recent)`,
                     images_per_second,
                     100);
 
-        // total cost of computation
-        update_stat_no_bar("total_cost", `Overall cost: $${stats.cost.toFixed(2)}`);
+        update_stat_no_bar("total_cost", `Overall cost: $${progress.cost.toFixed(2)}`);
 
-        // Cost per (successfully processed) image
-        let cost_per_1k_images = stats.n_processed === 0 ? 0 : (1000 * stats.cost / stats.n_processed);
+        let cost_per_1k_images = progress.n_processed === 0 ? 0 : (1000 * progress.cost / progress.n_processed);
         update_stat_no_bar("cost_per_image", `Cost per 1K images: $${cost_per_1k_images.toFixed(4)}`);
 
-        // Time breakdown pie chart
+        prev_progress = progress;
+    };
+
+    const update_profiling = (profiling) => {
         let data = google.visualization.arrayToDataTable([
             ["", ""],
-            ["Cloud Run Overhead (s)", stats.total_time - stats.gcr_time],
-            ["Model Loading (s)",      stats.gcr_time - stats.request_time],
-            ["I/O (s)",                stats.request_time - stats.compute_time],
-            ["Compute (s)",            stats.compute_time],
+            ["Cloud Run Overhead (s)", profiling.total_time - profiling.billed_time],
+            ["Model Loading (s)",      profiling.billed_time - profiling.request_time],
+            ["Non-Pipelined I/O (s)",  profiling.request_time - profiling.compute_time],
+            ["Compute (s)",            profiling.compute_time],
         ]);
         let options = {
           title: "Average Request Breakdown",
@@ -286,11 +271,9 @@
         };
         let chart = new google.visualization.PieChart(document.getElementById("time_breakdown"));
         chart.draw(data, options);
-
-        prev_stats = stats;
     };
 
-    const update_worker_info = (workers) => {
+    const update_workers = (workers) => {
         if (!workers) return;
 
         // # of chunks per worker histogram
@@ -310,7 +293,6 @@
 
     // Helper functions
 
-    // TODO(mihirg): Make this less hacky, potentially move to server?
     const make_derivative = (cur, prev, key, fn) => {
         if (!$.isEmptyObject(prev)) {
             // Take derivative

@@ -2,60 +2,111 @@ import aiohttp
 import asyncio
 import functools
 import itertools
-import struct
+
+# import struct
 import time
 
 import click
-from google.cloud.pubsub_v1 import PublisherClient, SubscriberClient
-from google.cloud.pubsub_v1.types import BatchSettings
+
+# from google.cloud.pubsub_v1 import PublisherClient, SubscriberClient
+# from google.cloud.pubsub_v1.types import BatchSettings
 
 
 SUBSCRIPTION_MAX_MESSAGES = 2000
-REQUEST_ENDPOINT = "https://pubsub-wj4n6yaj3q-uw.a.run.app"
+# REQUEST_ENDPOINT = ""
+# REQUEST_ENDPOINT = "https://knn-wj4n6yaj3q-uw.a.run.app/delay"
+# REQUEST_ENDPOINT = "https://large-container-sleep-microbenchmark-central1-wj4n6yaj3q-uc.a.run.app/delay"  # noqa
+# REQUEST_ENDPOINT = "https://small-container-sleep-microbenchmark-central1-wj4n6yaj3q-uc.a.run.app"  # noqa
 PROJECT_NAME = "mihir-knn"
 REQUEST_QUEUE = "queries"
 RESPONSE_QUEUE = "results"
 SUBSCRIPTION_NAME = "pubsub-server"
 
 
-def main_pubsub(n_requests, delay, interval):
-    sub_client = SubscriberClient()
-    pub_client = PublisherClient()
+# WEST 1
+# ENDPOINTS = {
+#     (
+#         False,
+#         500,
+#     ): "https://small-container-500-worker-sleep-microbenchmark-w-wj4n6yaj3q-uw.a.run.app",
+#     (
+#         False,
+#         1000,
+#     ): "https://small-container-1k-worker-sleep-microbenchmark-we-wj4n6yaj3q-uw.a.run.app",
+#     (
+#         True,
+#         500,
+#     ): "https://large-container-500-worker-sleep-microbenchmark-w-wj4n6yaj3q-uw.a.run.app/delay",
+#     (
+#         True,
+#         1000,
+#     ): "https://large-container-1k-worker-sleep-microbenchmark-we-wj4n6yaj3q-uw.a.run.app/delay",
+# }
 
-    request_queue = pub_client.topic_path(PROJECT_NAME, REQUEST_QUEUE)
-    subscription_name = sub_client.subscription_path(PROJECT_NAME, SUBSCRIPTION_NAME)
+# CENTRAL 1
+ENDPOINTS = {
+    (
+        False,
+        500,
+    ): "https://small-container-500-worker-sleep-microbenchmark-c-wj4n6yaj3q-uc.a.run.app",
+    (
+        False,
+        1000,
+    ): "https://small-container-1k-worker-sleep-microbenchmark-ce-wj4n6yaj3q-uc.a.run.app",
+    (
+        True,
+        500,
+    ): "https://large-container-500-worker-sleep-microbenchmark-c-wj4n6yaj3q-uc.a.run.app/delay",
+    (
+        True,
+        1000,
+    ): "https://large-container-1k-worker-sleep-microbenchmark-ce-wj4n6yaj3q-uc.a.run.app/delay",
+}
 
-    payload = struct.pack("f", delay)
+# def main_pubsub(n_requests, delay, interval, end_after):
+#     sub_client = SubscriberClient()
+#     pub_client = PublisherClient()
 
-    # Create initial requests
-    if n_requests > 0:
-        initial_pub_client = PublisherClient(BatchSettings(max_messages=n_requests))
-        for i in range(n_requests):
-            initial_pub_client.publish(request_queue, payload)
+#     request_queue = pub_client.topic_path(PROJECT_NAME, REQUEST_QUEUE)
+#     subscription_name = sub_client.subscription_path(PROJECT_NAME, SUBSCRIPTION_NAME)
 
-    start_time = time.time()
-    n_received = 0
-    while True:
-        pull_response = sub_client.pull(
-            subscription_name, SUBSCRIPTION_MAX_MESSAGES, return_immediately=True
-        )
-        end_time = time.time()
+#     payload = struct.pack("f", delay)
 
-        ack_ids = []
-        for message in pull_response.received_messages:
-            if n_requests > 0:
-                pub_client.publish(request_queue, payload)
-            ack_ids.append(message.ack_id)
+#     # Create initial requests
+#     if n_requests > 0:
+#         initial_pub_client = PublisherClient(BatchSettings(max_messages=n_requests))
+#         for i in range(n_requests):
+#             initial_pub_client.publish(request_queue, payload)
 
-        if ack_ids:
-            sub_client.acknowledge(subscription_name, ack_ids)
+#     start_time = time.time()
+#     n_received = 0
+#     n_finished = 0
+#     while True:
+#         pull_response = sub_client.pull(
+#             subscription_name, SUBSCRIPTION_MAX_MESSAGES, return_immediately=True
+#         )
+#         end_time = time.time()
 
-        n_received += len(ack_ids)
-        dt = end_time - start_time
-        if dt >= interval:
-            print(f"Throughput: {n_received / dt}")
-            start_time = end_time
-            n_received = 0
+#         ack_ids = []
+#         for message in pull_response.received_messages:
+#             if n_requests > 0:
+#                 pub_client.publish(request_queue, payload)
+#             ack_ids.append(message.ack_id)
+
+#         if ack_ids:
+#             sub_client.acknowledge(subscription_name, ack_ids)
+
+#         n_received += len(ack_ids)
+#         dt = end_time - start_time
+#         if dt >= interval:
+#             print(f"Throughput: {n_received / dt}")
+
+#             n_finished += 1
+#             if n_finished == end_after:
+#                 break
+
+#             start_time = end_time
+#             n_received = 0
 
 
 def limited_as_completed(coros, limit):
@@ -87,8 +138,8 @@ def unasync(f):
     return wrapper
 
 
-async def request(session, delay):
-    async with session.post(REQUEST_ENDPOINT, json={"delay": delay}) as response:
+async def request(session, delay, endpoint):
+    async with session.post(endpoint, json={"delay": delay}) as response:
         return response.status == 200
 
 
@@ -98,26 +149,43 @@ def make_requests(*args, **kwargs):
 
 
 @unasync
-async def main_asyncio(n_requests, delay, interval):
-    start_time = time.time()
-    n_successful = 0
-    n_total = 0
+async def main_asyncio(n_requests, delay, interval, end_after, large):
+    n_successful = [0]
+    n_total = [0]
     conn = aiohttp.TCPConnector(limit=0)  # unbounded; make sure ulimit >> n_requests
+
+    endpoint = ENDPOINTS[(large, n_requests)]
+    first_successful = None
+
+    async def benchmark():
+        n_finished = 0
+        while True:
+            await asyncio.sleep(interval)
+            print(f"{n_successful[0]}, {n_total[0]}")
+            n_successful[0] = 0
+            n_total[0] = 0
+
+            n_finished += 1
+            if n_finished == end_after:
+                break
+
+    benchmark_task = asyncio.create_task(benchmark())
+    start_time = time.time()
+
     async with aiohttp.ClientSession(connector=conn) as session:
-        for response in limited_as_completed(make_requests(session, delay), n_requests):
+        for response in limited_as_completed(
+            make_requests(session, delay, endpoint), n_requests
+        ):
+            if benchmark_task.done():
+                break
             success = await response
-            n_successful += 1 if success else 0
-            n_total += 1
-            end_time = time.time()
-            dt = end_time - start_time
-            if dt >= interval:
-                print(
-                    f"Successful throughput: {n_successful / dt}, "
-                    f"total throughput: {n_total / dt}"
-                )
-                start_time = end_time
-                n_successful = 0
-                n_total = 0
+            if not first_successful and success:
+                first_successful = time.time() - start_time
+
+            n_successful[0] += 1 if success else 0
+            n_total[0] += 1
+
+    print(f"First successful: {first_successful}")
 
 
 @click.command()
@@ -126,10 +194,14 @@ async def main_asyncio(n_requests, delay, interval):
 @click.option(
     "--interval", default=10.0, help="Amount of time over which to measure throughput.",
 )
-@click.option("--pubsub/--no_pubsub", default=True)
-def main(n_requests, delay, interval, pubsub):
-    main_fn = main_pubsub if pubsub else main_asyncio
-    return main_fn(n_requests, delay, interval)
+@click.option(
+    "--end_after", default=0, help="Number of intervals to run for (0 = unlimited)."
+)
+@click.option("--large/--small", default=False)
+def main(n_requests, delay, interval, end_after, large):
+    return main_asyncio(n_requests, delay, interval, end_after, large)
+    # main_fn = main_pubsub if pubsub else main_asyncio
+    # return main_fn(n_requests, delay, interval, end_after)
 
 
 if __name__ == "__main__":
