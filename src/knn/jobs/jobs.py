@@ -9,7 +9,7 @@ from runstats import Statistics
 
 from knn import utils
 from knn.utils import JSONType
-from kkn.reducers import Reducer
+from knn.reducers import Reducer
 
 from . import defaults
 
@@ -26,9 +26,8 @@ from typing import (
 
 # Increase maximum number of open sockets if necessary
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-new_soft = min(defaults.DESIRED_ULIMIT, hard)
-if new_soft > soft:
-    resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+new_soft = max(min(defaults.DESIRED_ULIMIT, hard), soft)
+resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
 
 
 class MapReduceJob:
@@ -74,14 +73,19 @@ class MapReduceJob:
         callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         async def task():
-            result = await self.run_until_complete(iterable)
-            if callback is not None:
-                callback(result)
+            try:
+                result = await self.run_until_complete(iterable)
+            except asyncio.CancelledError:
+                pass
+            else:
+                if callback is not None:
+                    callback(result)
 
         self.task = asyncio.create_task(task())
 
     async def run_until_complete(self, iterable: Iterable[JSONType]) -> Dict[str, Any]:
         assert self._start_time is None  # can't reuse Job instances
+        self.start_time = time.time()
 
         try:
             self._n_total = len(iterable)
@@ -89,8 +93,7 @@ class MapReduceJob:
             pass
 
         connector = aiohttp.TCPConnector(limit=0)
-        with aiohttp.ClientSession(connector=connector) as session:
-            self.start_time = time.time()
+        async with aiohttp.ClientSession(connector=connector) as session:
             for response_tuple in utils.limited_as_completed(
                 (
                     self._request(session, chunk)
@@ -209,6 +212,7 @@ class MapReduceJob:
         self._n_failed += len(chunk) - n_successful
         self._n_chunks_per_mapper[result["worker_id"]] += 1
 
+        self._profiling["total_time"].push(elapsed_time)
         for k, v in result["profiling"].items():
             self._profiling[k].push(v)
 

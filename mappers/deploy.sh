@@ -3,6 +3,7 @@ cp common/* $1
 cp -r ../src/knn $1
 
 # Submit build from within subdirectory
+gcloud config set builds/use_kaniko True
 (cd $1; gcloud builds submit --tag gcr.io/visualdb-1046/mihir-$1)
 
 # Remove shared resources

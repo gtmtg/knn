@@ -21,13 +21,14 @@ class SpatialSearchMapper(ResNetBackboneMapper):
             ).unsqueeze(0),
         }
 
-    @Mapper.AssertionErrorTolerant
+    @Mapper.SkipIfAssertionError
     async def process_element(self, input, job_id, job_args, request_id):
         image_bucket = job_args["input_bucket"]
         image_path = input
+        image_name = image_path[image_path.rfind("/") + 1 : image_path.rfind(".")]
 
         output_bucket = job_args["output_bucket"]
-        output_path = os.path.join(job_args["output_path"], request_id)
+        output_path = os.path.join(job_args["output_path"], job_id, image_name)
 
         spatial_embeddings = await self.download_and_process_image(
             image_bucket, image_path, request_id
@@ -49,13 +50,12 @@ class SpatialSearchMapper(ResNetBackboneMapper):
         def cosine_similarity(x1_n, x2_t_n):  # n = L2 normalized, t = transposed
             return torch.mm(x1_n, x2_t_n)
 
-        with torch.no_grad():
-            embeddings_flat = embeddings.view(embeddings.size(0), -1)
-            embeddings_flat = torch.nn.functional.normalize(embeddings_flat, p=2, dim=0)
-            scores = cosine_similarity(template, embeddings_flat).view(-1)
-            score = torch.topk(scores, n_distances).values.mean().item()
-            score_map = scores.view(embeddings.size(1), embeddings.size(2))
-            return score, score_map
+        embeddings_flat = embeddings.view(embeddings.size(0), -1)
+        embeddings_flat = torch.nn.functional.normalize(embeddings_flat, p=2, dim=0)
+        scores = cosine_similarity(template, embeddings_flat).view(-1)
+        score = torch.topk(scores, n_distances).values.mean().item()
+        score_map = scores.view(embeddings.size(1), embeddings.size(2))
+        return score, score_map
 
     async def save_score_map(self, score_map, bucket, path):
         clamped_map = torch.clamp(score_map, config.MIN_VIZ_SCORE, config.MAX_VIZ_SCORE)

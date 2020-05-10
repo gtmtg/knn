@@ -36,17 +36,22 @@ class ResNetBackboneMapper(Mapper):
     async def download_and_process_image(self, image_bucket, image_path, request_id):
         # Download image
         image_bytes = await self.storage_client.download(image_bucket, image_path)
-        with io.BytesIO(image_bytes) as image_buffer:
-            image = Image.open(image_buffer)
 
-            # Preprocess
-            assert image.mode == "RGB"
-            image = torch.as_tensor(np.asarray(image), dtype=torch.float32)  # -> tensor
-            image = image.permute(2, 0, 1)  # HWC -> CHW
-            if self.input_format == "BGR":
-                image = torch.flip(image, dims=(0,))  # RGB -> BGR
-            image = image.contiguous()
-            image = self.normalize(image)
+        # Preprocess image
+        with self.profiler(request_id, "compute_time"):
+            with io.BytesIO(image_bytes) as image_buffer:
+                image = Image.open(image_buffer)
+
+                # Preprocess
+                assert image.mode == "RGB"
+                image = torch.as_tensor(
+                    np.asarray(image), dtype=torch.float32
+                )  # -> tensor
+                image = image.permute(2, 0, 1)  # HWC -> CHW
+                if self.input_format == "BGR":
+                    image = torch.flip(image, dims=(0,))  # RGB -> BGR
+                image = image.contiguous()
+                image = self.normalize(image)
 
         # Perform inference
         with self.profiler(request_id, "compute_time"):

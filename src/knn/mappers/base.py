@@ -6,7 +6,7 @@ import functools
 import time
 import uuid
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, DefaultDict
 
 from sanic import Sanic
 from sanic.response import json
@@ -15,10 +15,10 @@ from knn.utils import JSONType
 
 
 @dataclass
-class Profiler:
+class RequestProfiler:
     request_id: str
     category: str
-    results_dict: Dict[str, Dict[str, float]]
+    results_dict: Dict[str, DefaultDict[str, float]]
     additional: float = 0.0
 
     def __enter__(self):
@@ -58,12 +58,24 @@ class Mapper(abc.ABC):
     # DECORATORS
 
     @staticmethod
-    def AssertionErrorTolerant(f):
+    def SkipIfAssertionError(f):
         @functools.wraps(f)
         async def wrapper(*args, **kwargs):
             try:
                 return await f(*args, **kwargs)
             except AssertionError:
+                pass
+            return None
+
+        return wrapper
+
+    @staticmethod
+    def SkipIfError(f):
+        @functools.wraps(f)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await f(*args, **kwargs)
+            except Exception:
                 pass
             return None
 
@@ -76,11 +88,11 @@ class Mapper(abc.ABC):
 
         self.worker_id = str(uuid.uuid4())
         self._args_by_job: Dict[str, Any] = {}
-        self._profiling_results_by_request: Dict[
-            str, Dict[str, float]
+        self._profiling_results_by_request: DefaultDict[
+            str, DefaultDict[str, float]
         ] = collections.defaultdict(lambda: collections.defaultdict(float))
         self.profiler = functools.partial(
-            Profiler, results_dict=self._profiling_results_by_request
+            RequestProfiler, results_dict=self._profiling_results_by_request
         )
 
         self.initialize_container(*args, **kwargs)
@@ -94,11 +106,6 @@ class Mapper(abc.ABC):
     async def __call__(self, *args, **kwargs):
         return await self._server(*args, **kwargs)
 
-    async def _sleep(self, request):
-        delay = float(request.json["delay"])
-        await asyncio.sleep(delay)
-        return json(request.json)
-
     async def _handle_request(self, request):
         init_time = self._init_time
         self._init_time = 0.0
@@ -109,8 +116,8 @@ class Mapper(abc.ABC):
                 job_id = request.json["job_id"]
                 job_args = self._args_by_job.setdefault(
                     job_id, await self.initialize_job(request.json["job_args"])
-                )
-                outputs = await self.process_batch(
+                )  # memoized
+                outputs = await self.process_chunk(
                     request.json["inputs"], job_id, job_args, request_id
                 )
 
@@ -121,3 +128,8 @@ class Mapper(abc.ABC):
                 "outputs": outputs,
             }
         )
+
+    async def _sleep(self, request):
+        delay = float(request.json["delay"])
+        await asyncio.sleep(delay)
+        return json(request.json)

@@ -1,8 +1,11 @@
+from dataclasses import dataclass
 from enum import Enum
 import heapq
+
+from dataclasses_json import dataclass_json
 import numpy as np
 
-from typing import Callable, List, Optional, NamedTuple
+from typing import Callable, List, Optional
 
 from knn import utils
 from knn.utils import JSONType
@@ -11,10 +14,15 @@ from .base import Reducer
 
 
 class TopKReducer(Reducer):
-    class ScoredResult(NamedTuple):
+    @dataclass_json
+    @dataclass
+    class ScoredResult:
         score: float
         input: JSONType
         output: JSONType
+
+        def __lt__(self, other):
+            return self.score < other.score
 
     def __init__(
         self, k: int, extract_func: Optional[Callable[[JSONType], float]] = None
@@ -28,7 +36,7 @@ class TopKReducer(Reducer):
         result = TopKReducer.ScoredResult(self.extract_func(output), input, output)
         if len(self._top_k) < self.k:
             heapq.heappush(self._top_k, result)
-        elif result > self._top_k[0]:
+        elif self._top_k[0] < result:
             heapq.heapreplace(self._top_k, result)
 
     def extract_value(self, output: JSONType) -> float:
@@ -36,7 +44,7 @@ class TopKReducer(Reducer):
         return output
 
     @property
-    def result(self) -> List[TopKReducer.ScoredResult]:
+    def result(self) -> List[ScoredResult]:
         return list(reversed(sorted(self._top_k)))
 
 
@@ -47,11 +55,11 @@ class PoolingReducer(Reducer):
 
     def __init__(
         self,
-        pool_type: PoolingType = PoolingType.AVG,
+        pool_func: PoolingType = PoolingType.AVG,
         extract_func: Optional[Callable[[JSONType], np.ndarray]] = None,
     ) -> None:
         super().__init__()
-        self.pool_func = pool_type.value
+        self.pool_func = pool_func
         self.extract_func = extract_func or self.extract_value
         self._results = []  # type: List[np.ndarray]
 

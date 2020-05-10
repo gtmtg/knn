@@ -84,11 +84,15 @@ async def start(request):
         {
             "input_bucket": config.IMAGE_BUCKET,
             "output_bucket": config.OUTPUT_BUCKET,
+            "output_path": config.OUTPUT_PATH,
+            "n_distances_to_average": config.N_DISTANCES_TO_AVERAGE,
             "template": template,
         },
         n_mappers=n_mappers,
+        n_retries=1,
     )
     query_id = query_job.job_id
+    current_queries[query_id] = query_job
 
     dataset = DatasetIterator(config.IMAGE_LIST_PATH)
     cleanup_func = functools.partial(cleanup_query, query_id=query_id, dataset=dataset)
@@ -103,7 +107,10 @@ async def get_results(request):
     query_job = current_queries[query_id]
     if query_job.finished:
         current_queries.pop(query_id)
-    return json(query_job.job_result)
+
+    results = query_job.job_result
+    results["result"] = [r.to_dict() for r in results["result"]]  # make serializable
+    return json(results)
 
 
 @app.route("/stop", methods=["PUT"])

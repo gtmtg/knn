@@ -10,7 +10,7 @@ import config
 
 
 class ImageEmbeddingMapper(ResNetBackboneMapper):
-    @Mapper.AssertionErrorTolerant
+    @Mapper.SkipIfAssertionError
     async def process_element(self, input, job_id, job_args, request_id):
         image_bucket = job_args["input_bucket"]
         image_path = input["image"]
