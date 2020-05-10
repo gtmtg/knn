@@ -89,7 +89,6 @@ async def start(request):
             "template": template,
         },
         n_mappers=n_mappers,
-        n_retries=1,
     )
     query_id = query_job.job_id
     current_queries[query_id] = query_job
