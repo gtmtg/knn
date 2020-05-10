@@ -11,7 +11,7 @@ import config
 
 class ImageEmbeddingMapper(ResNetBackboneMapper):
     @Mapper.SkipIfAssertionError
-    async def process_element(self, input, job_id, job_args, request_id):
+    async def process_element(self, input, job_id, job_args, request_id, element_index):
         image_bucket = job_args["input_bucket"]
         image_path = input["image"]
         x1, y1, x2, y2 = input.get("patch", (0, 0, 1, 1))
