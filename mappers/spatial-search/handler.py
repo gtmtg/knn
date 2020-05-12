@@ -4,6 +4,7 @@ import os
 import numpy as np
 from PIL import Image
 import torch
+import torch.nn.functional as F
 
 from knn import utils
 from knn.mappers import Mapper
@@ -20,6 +21,12 @@ class SpatialSearchMapper(ResNetBackboneMapper):
                 utils.base64_to_numpy(job_args["template"])
             ).unsqueeze(0),
         }
+
+    async def postprocess_chunk(
+        self, inputs, embeddings, masks, sizes, job_id, job_args, request_id
+    ):
+        with self.profiler(request_id, "compute_time"):
+            pass
 
     @Mapper.SkipIfAssertionError
     async def process_element(self, input, job_id, job_args, request_id, element_index):
@@ -51,7 +58,7 @@ class SpatialSearchMapper(ResNetBackboneMapper):
             return torch.mm(x1_n, x2_t_n)
 
         embeddings_flat = embeddings.view(embeddings.size(0), -1)
-        embeddings_flat = torch.nn.functional.normalize(embeddings_flat, p=2, dim=0)
+        embeddings_flat = F.normalize(embeddings_flat, p=2, dim=0)
         scores = cosine_similarity(template, embeddings_flat).view(-1)
         score = torch.topk(scores, n_distances).values.mean().item()
         score_map = scores.view(embeddings.size(1), embeddings.size(2))
@@ -72,4 +79,4 @@ class SpatialSearchMapper(ResNetBackboneMapper):
             await self.storage_client.upload(bucket, path, image_buffer)
 
 
-mapper = SpatialSearchMapper(config.RESNET_CONFIG, config.WEIGHTS_PATH)
+mapper = SpatialSearchMapper(config.RESNET_CONFIG)

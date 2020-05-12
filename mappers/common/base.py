@@ -65,7 +65,7 @@ class BatchEmbedder:
         embeddings = next(iter(self.model(images).values()))
         masks = F.max_pool2d(
             masks,
-            (embeddings.size(2) // masks.size(2), embeddings.size(3) // masks.size(3),),
+            (masks.size(2) // embeddings.size(2), masks.size(3) // embeddings.size(3),),
         )
         return embeddings, masks, sizes, indices
 

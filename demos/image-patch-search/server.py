@@ -38,7 +38,7 @@ class DatasetIterator:
         elem = self._list.readline().strip()
         if not elem:
             raise StopIteration
-        return elem
+        return {"image": elem}
 
 
 # Start web server

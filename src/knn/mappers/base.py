@@ -63,18 +63,6 @@ class Mapper(abc.ABC):
     # DECORATORS
 
     @staticmethod
-    def SkipIfAssertionError(f):
-        @functools.wraps(f)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await f(*args, **kwargs)
-            except AssertionError:
-                pass
-            return None
-
-        return wrapper
-
-    @staticmethod
     def SkipIfError(f):
         @functools.wraps(f)
         async def wrapper(*args, **kwargs):
