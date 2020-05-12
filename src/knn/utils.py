@@ -1,18 +1,40 @@
 import asyncio
 import base64
+import functools
 import io
 import itertools
 
 import numpy as np
 
-from typing import (
-    Any,
-    List,
-    Union,
-    Dict,
-)
+from typing import Any, List, Union, Dict, Iterator
 
 JSONType = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
+
+
+class FileListIterator:
+    def __init__(self, list_path: str) -> None:
+        self._list = open(list_path, "r")
+        self._total = 0
+        for line in self._list:
+            if not line.strip():
+                break
+            self._total += 1
+        self._list.seek(0)
+
+    def close(self, *args, **kwargs):
+        self._list.close()
+
+    def __len__(self):
+        return self._total
+
+    def __iter__(self) -> Iterator[str]:
+        return self
+
+    def __next__(self) -> str:
+        elem = self._list.readline().strip()
+        if not elem:
+            raise StopIteration
+        return elem
 
 
 def limited_as_completed(coros, limit):
@@ -35,6 +57,14 @@ def limited_as_completed(coros, limit):
 
     while pending[0] > 0:
         yield first_to_finish()
+
+
+def unasync(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+
+    return wrapper
 
 
 def chunk(iterable, chunk_size):

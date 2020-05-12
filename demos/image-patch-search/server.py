@@ -2,7 +2,7 @@ import asyncio
 import functools
 from operator import itemgetter
 
-from typing import Dict, Iterator
+from typing import Dict
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sanic import Sanic
@@ -10,35 +10,9 @@ from sanic.response import json, html, text
 
 from knn.jobs import MapReduceJob
 from knn.reducers import TopKReducer, PoolingReducer
-from knn.utils import numpy_to_base64
+from knn.utils import FileListIterator, numpy_to_base64
 
 import config
-
-
-class DatasetIterator:
-    def __init__(self, list_path: str) -> None:
-        self._list = open(list_path, "r")
-        self._total = 0
-        for line in self._list:
-            if not line.strip():
-                break
-            self._total += 1
-        self._list.seek(0)
-
-    def close(self):
-        self._list.close()
-
-    def __len__(self):
-        return self._total
-
-    def __iter__(self) -> Iterator[str]:
-        return self
-
-    def __next__(self) -> str:
-        elem = self._list.readline().strip()
-        if not elem:
-            raise StopIteration
-        return elem
 
 
 # Start web server
@@ -93,7 +67,7 @@ async def start(request):
     query_id = query_job.job_id
     current_queries[query_id] = query_job
 
-    dataset = DatasetIterator(config.IMAGE_LIST_PATH)
+    dataset = FileListIterator(config.IMAGE_LIST_PATH)
     cleanup_func = functools.partial(cleanup_query, query_id=query_id, dataset=dataset)
     await query_job.start(dataset, cleanup_func)
 
@@ -119,7 +93,7 @@ async def stop(request):
     return text("", status=204)
 
 
-def cleanup_query(_, query_id: str, dataset: DatasetIterator):
+def cleanup_query(_, query_id: str, dataset: FileListIterator):
     dataset.close()
     asyncio.create_task(final_query_cleanup(query_id))
 

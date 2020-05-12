@@ -10,6 +10,7 @@ sanic = "*"
 jinja2 = "*"
 uvicorn = "*"
 knn = {editable = true,path = "./../.."}
+click = "*"
 
 [requires]
 python_version = "3.7"
