@@ -1,6 +1,5 @@
+from knn.jobs.defaults import N_MAPPERS as N_CONCURRENT_WORKERS_DEFAULT
 from lvis_config import IMAGE_BUCKET, IMAGE_LIST_PATH, DEMO_IMAGES
-
-N_CONCURRENT_WORKERS_DEFAULT = 500
 
 TEMPLATE_ENDPOINT = "https://mihir-image-embedding-g6rwrca4fq-uc.a.run.app"
 
