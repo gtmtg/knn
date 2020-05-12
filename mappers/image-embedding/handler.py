@@ -1,37 +1,34 @@
 import math
 
-import torch
+import torch.nn.functional as F
 
 from knn import utils
-from knn.mappers import Mapper
 
 from base import ResNetBackboneMapper
 import config
 
 
 class ImageEmbeddingMapper(ResNetBackboneMapper):
-    @Mapper.SkipIfAssertionError
-    async def process_element(self, input, job_id, job_args, request_id, element_index):
-        image_bucket = job_args["input_bucket"]
-        image_path = input["image"]
-        x1, y1, x2, y2 = input.get("patch", (0, 0, 1, 1))
-
-        spatial_embeddings = await self.download_and_process_image(
-            image_bucket, image_path, request_id
-        )
-
+    async def postprocess_chunk(
+        self, inputs, embeddings, masks, sizes, job_id, job_args, request_id
+    ):
         with self.profiler(request_id, "compute_time"):
-            _, h, w = spatial_embeddings.size()
+            results = []
 
-            x1 = int(math.floor(x1 * w))
-            y1 = int(math.floor(y1 * h))
-            x2 = int(math.ceil(x2 * w))
-            y2 = int(math.ceil(y2 * h))
+            for input, size, embedding in zip(inputs, sizes, embeddings):
+                x1, y1, x2, y2 = input.get("patch", (0, 0, 1, 1))
+                h, w = size
 
-            embedding = spatial_embeddings[:, y1:y2, x1:x2].mean(dim=-1).mean(dim=-1)
-            embedding = torch.nn.functional.normalize(embedding, p=2, dim=0)
+                x1 = int(math.floor(x1 * w / config.RESNET_DOWNSAMPLE_FACTOR))
+                y1 = int(math.floor(y1 * h / config.RESNET_DOWNSAMPLE_FACTOR))
+                x2 = int(math.ceil(x2 * w / config.RESNET_DOWNSAMPLE_FACTOR))
+                y2 = int(math.ceil(y2 * h / config.RESNET_DOWNSAMPLE_FACTOR))
 
-        return utils.numpy_to_base64(embedding.numpy())
+                pooled_embedding = embedding[:, y1:y2, x1:x2].mean(dim=-1).mean(dim=-1)
+                pooled_embedding = F.normalize(embedding, p=2, dim=0)
+                results.append(utils.numpy_to_base64(pooled_embedding.numpy()))
+
+            return results
 
 
-mapper = ImageEmbeddingMapper(config.RESNET_CONFIG, config.WEIGHTS_PATH)
+mapper = ImageEmbeddingMapper(config.RESNET_CONFIG)
