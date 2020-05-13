@@ -35,8 +35,5 @@ class ImageEmbeddingMapper(ResNetBackboneMapper):
 
 
 mapper = ImageEmbeddingMapper(
-    config.RESNET_CONFIG,
-    config.WEIGHTS_BUCKET,
-    config.WEIGHTS_CLOUD_PATH,
-    config.WEIGHTS_LOCAL_PATH,
+    config.RESNET_CONFIG, config.WEIGHTS_CLOUD_PATH, config.WEIGHTS_LOCAL_PATH,
 )
