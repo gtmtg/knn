@@ -104,8 +104,11 @@ def run_slave(input_queue, output_queue):
     slave = SpatialSearchMapper(
         config.RESNET_CONFIG, config.WEIGHTS_PATH, start_server=False
     )
+    loop = asyncio.get_event_loop()
     for input_chunk_args in iter(input_queue.get, None):
-        output_queue.put(await slave.process_chunk(*input_chunk_args))
+        output_queue.put(
+            loop.run_until_complete(slave.process_chunk(*input_chunk_args))
+        )
 
 
 input_queue = multiprocessing.Queue()  # type: ignore
