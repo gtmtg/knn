@@ -42,12 +42,10 @@ class Mapper(abc.ABC):
     async def process_chunk(
         self, chunk: List[JSONType], job_id: str, job_args: Any, request_id: str
     ) -> List[JSONType]:
-        return await asyncio.gather(
-            *[
-                self.process_element(input, job_id, job_args, request_id, i)
-                for i, input in enumerate(chunk)
-            ]
-        )
+        return [
+            await self.process_element(input, job_id, job_args, request_id, i)
+            for i, input in enumerate(chunk)
+        ]
 
     @abc.abstractmethod
     async def process_element(
