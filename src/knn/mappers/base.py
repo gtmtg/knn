@@ -88,7 +88,7 @@ class Mapper(abc.ABC):
 
     # INTERNAL
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, start_server=True, **kwargs):
         init_start_time = time.time()
 
         self.worker_id = str(uuid.uuid4())
@@ -102,7 +102,7 @@ class Mapper(abc.ABC):
 
         self.initialize_container(*args, **kwargs)
 
-        if kwargs.get("start_server", True):
+        if start_server:
             self._server = Sanic(self.worker_id)
             self._server.add_route(self._handle_request, "/", methods=["POST"])
             self._server.add_route(self._sleep, "/sleep", methods=["POST"])
