@@ -19,7 +19,7 @@ class ResNetBackboneMapper(Mapper):
         # Load model weights
         weights_local_path = pathlib.Path(weights_local_path)
         weights_local_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(weights_local_path, "wb") as weights_file:
+        with weights_local_path.open("wb") as weights_file:
             SyncStorage().download_blob_to_file(weights_cloud_path, weights_file)
 
         # Create model
@@ -28,7 +28,7 @@ class ResNetBackboneMapper(Mapper):
 
         # Load model weights
         checkpointer = DetectionCheckpointer(self.model, save_to_disk=False)
-        checkpointer.load(weights_local_path)
+        checkpointer.load(weights_local_path.as_posix())
         weights_local_path.unlink()
         self.model.eval()
         torch.set_grad_enabled(False)
