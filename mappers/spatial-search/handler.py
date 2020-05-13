@@ -109,7 +109,7 @@ def run_slave(input_queue, output_queue):
         for input_chunk_args in iter(input_queue.get, None):
             output_queue.put(await slave.process_chunk(*input_chunk_args))
 
-    asyncio.create_task(run())
+    asyncio.run(run())
 
 
 input_queue = multiprocessing.Queue()  # type: ignore
