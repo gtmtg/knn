@@ -1,6 +1,7 @@
 import io
-import os
+import pathlib
 
+from google.cloud.storage import Client as SyncStorage
 from gcloud.aio.storage import Storage
 import numpy as np
 from PIL import Image
@@ -14,17 +15,12 @@ from knn.mappers import Mapper
 
 
 class ResNetBackboneMapper(Mapper):
-    def initialize_container(
-        self, cfg, weights_bucket, weights_cloud_path, weights_local_path
-    ):
-        # Create connection pools
-        self.storage_client = Storage()
-
+    def initialize_container(self, cfg, weights_cloud_path, weights_local_path):
         # Load model weights
+        weights_local_path = pathlib.Path(weights_local_path)
+        weights_local_path.parent.mkdir(parents=True, exist_ok=True)
         with open(weights_local_path, "wb") as weights_file:
-            weights_file.write(
-                await self.storage_client.download(weights_bucket, weights_cloud_path)
-            )
+            SyncStorage().download_blob_to_file(weights_cloud_path, weights_file)
 
         # Create model
         shape = ShapeSpec(channels=3)
@@ -33,7 +29,7 @@ class ResNetBackboneMapper(Mapper):
         # Load model weights
         checkpointer = DetectionCheckpointer(self.model, save_to_disk=False)
         checkpointer.load(weights_local_path)
-        os.remove(weights_local_path)
+        weights_local_path.unlink()
         self.model.eval()
         torch.set_grad_enabled(False)
 
@@ -42,6 +38,9 @@ class ResNetBackboneMapper(Mapper):
         pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1)
         self.normalize = lambda image: (image - pixel_mean) / pixel_std
         self.input_format = cfg.INPUT.FORMAT
+
+        # Create connection pools
+        self.storage_client = Storage()
 
     async def download_and_process_image(self, image_bucket, image_path, request_id):
         # Download image
