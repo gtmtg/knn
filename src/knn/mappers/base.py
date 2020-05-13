@@ -102,14 +102,18 @@ class Mapper(abc.ABC):
 
         self.initialize_container(*args, **kwargs)
 
-        self._server = Sanic(self.worker_id)
-        self._server.add_route(self._handle_request, "/", methods=["POST"])
-        self._server.add_route(self._sleep, "/sleep", methods=["POST"])  # benchmarking
+        if kwargs.get("start_server", True):
+            self._server = Sanic(self.worker_id)
+            self._server.add_route(self._handle_request, "/", methods=["POST"])
+            self._server.add_route(self._sleep, "/sleep", methods=["POST"])
+        else:
+            self._server = None
 
         self._init_time = time.time() - init_start_time
 
     async def __call__(self, *args, **kwargs):
-        return await self._server(*args, **kwargs)
+        if self._server is not None:
+            return await self._server(*args, **kwargs)
 
     async def _handle_request(self, request):
         init_time = self._init_time
