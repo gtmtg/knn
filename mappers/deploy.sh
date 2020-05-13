@@ -4,7 +4,7 @@ cp -r ../src/knn $1
 
 # Submit build from within subdirectory
 gcloud config set builds/use_kaniko True
-(cd $1; gcloud builds submit --tag gcr.io/visualdb-1046/mihir-$1)
+(cd $1; gcloud builds submit --tag gcr.io/visualdb-1046/mihir-$1-$(git rev-parse --abbrev-ref HEAD))
 
 # Remove shared resources
 for file in $(ls common/)
@@ -14,4 +14,4 @@ done
 rm -rf $1/knn
 
 # Deploy Cloud Run handler
-gcloud run deploy mihir-$1 --image gcr.io/visualdb-1046/mihir-$1 --platform managed --concurrency 1 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-west1 --allow-unauthenticated
+gcloud run deploy mihir-$1-$(git rev-parse --abbrev-ref HEAD) --image gcr.io/visualdb-1046/mihir-$1-$(git rev-parse --abbrev-ref HEAD) --platform managed --concurrency 1 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-west1 --allow-unauthenticated
