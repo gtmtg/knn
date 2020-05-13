@@ -1,5 +1,6 @@
 import asyncio
 import click
+import json
 
 from knn.jobs import MapReduceJob
 from knn.reducers import Reducer
@@ -44,15 +45,15 @@ async def main(mapper, workers, interval, output):
     dataset = FileListIterator(config.IMAGE_LIST_PATH)
     await query_job.start(dataset, dataset.close)
 
-    prev = 0
-    while not query_job.finished:
-        await asyncio.sleep(interval)
-        cur = query_job._n_successful
-        throughput = (cur - prev) / interval
-        prev = cur
-
-        print(throughput)
-        output.write(f"{throughput}\n")
+    results = []
+    try:
+        while not query_job.finished:
+            await asyncio.sleep(interval)
+            results.append(query_job.job_result)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        json.dump(results, output)
 
 
 if __name__ == "__main__":
