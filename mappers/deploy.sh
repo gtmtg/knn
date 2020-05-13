@@ -14,4 +14,4 @@ done
 rm -rf $1/knn
 
 # Deploy Cloud Run handler
-gcloud run deploy mihir-$1 --image gcr.io/visualdb-1046/mihir-$1 --platform managed --concurrency 1 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-central1 --allow-unauthenticated
+gcloud run deploy mihir-$1 --image gcr.io/visualdb-1046/mihir-$1 --platform managed --concurrency 1 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-west1 --allow-unauthenticated
