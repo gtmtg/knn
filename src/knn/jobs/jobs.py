@@ -97,7 +97,7 @@ class MapReduceJob:
             for response_tuple in utils.limited_as_completed(
                 (
                     self._request(session, chunk)
-                    for chunk in utils.chunk(iterable, self.chunk_size)
+                    for chunk in utils.chunk(iterable, 2 * self.chunk_size)
                 ),
                 self.n_mappers,
             ):

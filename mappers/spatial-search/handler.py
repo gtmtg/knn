@@ -113,6 +113,6 @@ output_queue = multiprocessing.Queue()  # type: ignore
 slave = multiprocessing.Process(target=run_slave, args=(input_queue, output_queue))
 slave.start()
 
-handler = SpatialSearchMasterMapper(
+mapper = SpatialSearchMasterMapper(
     input_queue, output_queue, config.RESNET_CONFIG, config.WEIGHTS_PATH
 )
