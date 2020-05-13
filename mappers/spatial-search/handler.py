@@ -101,11 +101,11 @@ class SpatialSearchMasterMapper(SpatialSearchMapper):
 
 
 def run_slave(input_queue, output_queue):
-    slave = SpatialSearchMapper(
-        config.RESNET_CONFIG, config.WEIGHTS_PATH, start_server=False
-    )
-
     async def run():
+        slave = SpatialSearchMapper(
+            config.RESNET_CONFIG, config.WEIGHTS_PATH, start_server=False
+        )
+
         for input_chunk_args in iter(input_queue.get, None):
             output_queue.put(await slave.process_chunk(*input_chunk_args))
 
