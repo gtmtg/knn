@@ -27,7 +27,7 @@ class SegmentationMapper(Mapper):
         cfg.MODEL.DEVICE = "cpu"
 
         self.model = DefaultPredictor(cfg)
-        self.metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
+        self.metadata = MetadataCatalog(cfg.DATASETS.TEST[0])
         torch.set_grad_enabled(False)
 
         self.storage_client = storage.Client()
@@ -36,18 +36,18 @@ class SegmentationMapper(Mapper):
         self, input, job_id, job_args, request_id, element_index,
     ):
         # Download image
-        image_bucket = job_args["input_bucket"]
-        image_path = input
+        input_bucket = job_args["input_bucket"]
+        input_path = input
         with io.BytesIO() as input_buffer:
             self.storage_client.download_blob_to_file(
-                f"gs://{image_bucket}/{image_path}", input_buffer
+                f"gs://{input_bucket}/{input_path}", input_buffer
             )
             frame = np.asarray(Image.open(input_buffer))
 
-            # RGB -> BGR
+            # Preprocess
             frame_bgr = frame[:, :, ::-1]
 
-            # Perform segmentation
+            # Segmentation
             result = self.model(frame_bgr)
 
             # Render output
@@ -57,7 +57,7 @@ class SegmentationMapper(Mapper):
             )
             rendered = vis_output.get_image()
 
-        # Encode image
+        # Encode response
         output = Image.fromarray(rendered)
         with io.BytesIO() as output_buffer:
             output.save(output_buffer, format="JPEG", quality=85)
