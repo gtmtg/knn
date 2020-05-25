@@ -1,12 +1,12 @@
 FROM python:3.7-slim
 
-# Copy local code to the container image.
 ENV APP_HOME /app
 WORKDIR $APP_HOME
-COPY . ./
 
 # Install dependencies.
+COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
 # Run the web service on container startup.
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 1 handler:app
+COPY . ./
+CMD exec uvicorn --host "0.0.0.0" --port $PORT --workers 1 --log-level warning handler:mapper
