@@ -11,8 +11,8 @@ from knn.jobs import MapReduceJob
     "--mapper",
     default="https://mihir-mihir-benchmark-cpu-g6rwrca4fq-uc.a.run.app",
 )
-@click.option("-r", "--runtime", default=10)
-@click.option("-n", "--num_trials", default=100)
+@click.option("-r", "--runtime", default=5)
+@click.option("-n", "--num_trials", default=50)
 @utils.unasync
 async def main(mapper, runtime, num_trials):
     job = MapReduceJob(
