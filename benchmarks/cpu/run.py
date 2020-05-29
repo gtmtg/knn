@@ -6,11 +6,7 @@ from knn.jobs import MapReduceJob
 
 
 @click.command()
-@click.option(
-    "-m",
-    "--mapper",
-    default="https://mihir-mihir-benchmark-cpu-g6rwrca4fq-uc.a.run.app",
-)
+@click.option("-m", "--mapper", type=str, required=True)
 @click.option("-r", "--runtime", default=5)
 @click.option("-n", "--num_trials", default=50)
 @utils.unasync

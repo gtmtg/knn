@@ -47,12 +47,17 @@ def run_slave(input_queue, output_queue):
     asyncio.run(run())
 
 
-if os.cpu_count() == 1:
-    mapper = BenchmarkCPUMapper()
-else:  # treat as 2
-    input_queue = multiprocessing.Queue()  # type: ignore
-    output_queue = multiprocessing.Queue()  # type: ignore
-    slave = multiprocessing.Process(target=run_slave, args=(input_queue, output_queue))
-    slave.start()
+if __name__ == "__main__":
+    if os.cpu_count() == 1:
+        mapper = BenchmarkCPUMapper()
+    else:  # treat as 2
+        input_queue = multiprocessing.Queue()  # type: ignore
+        output_queue = multiprocessing.Queue()  # type: ignore
+        slave = multiprocessing.Process(
+            target=run_slave, args=(input_queue, output_queue)
+        )
+        os.system(f"taskset -p -c {os.cpu_count() - 1} {slave.pid}")
+        slave.start()
 
-    mapper = BenchmarkCPUMasterMapper(input_queue, output_queue)
+        os.system(f"taskset -p -c 0 {os.getpid()}")
+        mapper = BenchmarkCPUMasterMapper(input_queue, output_queue)
