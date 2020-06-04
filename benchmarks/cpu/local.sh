@@ -8,7 +8,7 @@ port=${1:-1234}
 cp -r $root_path/src/knn $folder
 
 # Run handler from within subdirectory
-(cd $folder && uvicorn --host "0.0.0.0" --port $port --workers 1 handler:mapper)
+(cd $folder && g++ -o handler -O3 handler.cc && uvicorn --host "0.0.0.0" --port $port --workers 1 handler:mapper)
 
 # Remove shared resources
 rm -rf $folder/knn
