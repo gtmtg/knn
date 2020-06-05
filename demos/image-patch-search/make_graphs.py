@@ -17,9 +17,10 @@ def main(input, breakdown, throughput, workers):
 
     if breakdown:
         times = results[-1]["performance"]["profiling"]
-        print(times["boot_time"])
-        print(len(results[-1]["performance"]["mapper_utilization"]))
-        print()
+        if "boot_time" in times:
+            print(times["boot_time"])
+            print(len(results[-1]["performance"]["mapper_utilization"]))
+            print()
         print(times["total_time"] - times["billed_time"])  # Cloud Run overhead
         print(times["billed_time"] - times["request_time"])  # Model loading
         print(times["request_time"] - times["compute_time"])  # I/O
