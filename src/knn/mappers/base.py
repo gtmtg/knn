@@ -88,8 +88,8 @@ class Mapper(abc.ABC):
 
     # INTERNAL
 
-    def __init__(self, *args, **kwargs):
-        init_start_time = time.time()
+    def __init__(self, *args, start_server=True, **kwargs):
+        self._init_start_time = time.time()
 
         self.worker_id = str(uuid.uuid4())
         self._args_by_job: Dict[str, Any] = {}
@@ -102,20 +102,29 @@ class Mapper(abc.ABC):
 
         self.initialize_container(*args, **kwargs)
 
-        self._server = Sanic(self.worker_id)
-        self._server.add_route(self._handle_request, "/", methods=["POST"])
-        self._server.add_route(self._sleep, "/sleep", methods=["POST"])  # benchmarking
+        if start_server:
+            self._server = Sanic(self.worker_id)
+            self._server.add_route(self._handle_request, "/", methods=["POST"])
+            self._server.add_route(self._sleep, "/sleep", methods=["POST"])
+        else:
+            self._server = None
 
-        self._init_time = time.time() - init_start_time
+        self._init_time = time.time() - self._init_start_time
+        self._boot_time = None  # will be set later
 
     async def __call__(self, *args, **kwargs):
-        return await self._server(*args, **kwargs)
+        if self._server is not None:
+            return await self._server(*args, **kwargs)
 
     async def _handle_request(self, request):
         init_time = self._init_time
-        self._init_time = 0.0
+        if self._init_time:
+            self._init_time = 0.0
+            self._boot_time = time.time() - self._init_start_time
 
         request_id = str(uuid.uuid4())
+        with self.profiler(request_id, "boot_time", additional=self._boot_time):
+            pass
         with self.profiler(request_id, "billed_time", additional=init_time):
             with self.profiler(request_id, "request_time"):
                 job_id = request.json["job_id"]

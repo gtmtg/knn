@@ -4,6 +4,7 @@ import heapq
 
 from dataclasses_json import dataclass_json
 import numpy as np
+from runstats import Statistics
 
 from typing import Callable, List, Optional
 
@@ -73,3 +74,21 @@ class PoolingReducer(Reducer):
     @property
     def result(self) -> np.ndarray:
         return self.pool_func(np.stack(self._results), axis=0)
+
+
+class StatisticsReducer(Reducer):
+    def __init__(self, extract_func: Optional[Callable[[JSONType], float]] = None):
+        super().__init__()
+        self._result = Statistics()
+        self.extract_func = extract_func or self.extract_value
+
+    def handle_result(self, input: JSONType, output: JSONType) -> None:
+        self._result.push(self.extract_func(output))
+
+    def extract_value(self, output: JSONType) -> float:
+        assert isinstance(output, float) or isinstance(output, int)
+        return output
+
+    @property
+    def result(self) -> Statistics:
+        return self._result
