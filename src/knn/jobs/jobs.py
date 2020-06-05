@@ -95,10 +95,18 @@ class MapReduceJob:
 
         iterable_as_list = list(iterable)
 
-        chunked = itertools.chain(
-            utils.chunk(iterable_as_list[:1000], 1),
-            utils.chunk(iterable_as_list[1000:], self.chunk_size),
-        )
+        # chunked = utils.chunk(iterable_as_list, 1)
+        chunked = utils.chunk(iterable_as_list, 3)
+        # chunked = utils.chunk(iterable_as_list, 5)
+        # chunked = itertools.chain(
+        #     utils.chunk(iterable_as_list[:2000], 1),
+        #     utils.chunk(iterable_as_list[2000:], 3),
+        # )
+        # chunked = itertools.chain(
+        #     utils.chunk(iterable_as_list[:2000], 1),
+        #     utils.chunk(iterable_as_list[2000:10000], 3),
+        #     utils.chunk(iterable_as_list[10000:], 5),
+        # )
 
         connector = aiohttp.TCPConnector(limit=0)
         async with aiohttp.ClientSession(connector=connector) as session:
