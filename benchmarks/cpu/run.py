@@ -16,7 +16,7 @@ async def main(mapper, runtime, cores, num_trials):
         mapper,
         StatisticsReducer(),
         {"runtime": runtime, "cores": cores},
-        n_mappers=1000,
+        n_mappers=1000 if "run.app" in mapper else 1,
         n_retries=10,  # ensure we get all trials in
         chunk_size=1,  # hit different worker instances
     )
