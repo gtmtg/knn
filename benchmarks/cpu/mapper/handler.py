@@ -4,13 +4,14 @@ from knn.mappers import Mapper
 
 
 class BenchmarkCPUMapper(Mapper):
-    async def run_on_core(self, core, runtime):
+    @staticmethod
+    async def run_on_core(core, runtime):
         process = await asyncio.create_subprocess_shell(
             f"taskset -c {core} ./handler",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await process.communicate(str(runtime))
+        stdout, _ = await process.communicate(str(runtime).encode())
         return int(stdout.decode())
 
     @Mapper.SkipIfError
