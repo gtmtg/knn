@@ -88,16 +88,16 @@ class MapReduceJob:
         assert self._start_time is None  # can't reuse Job instances
         self.start_time = time.time()
 
+        # iterable = list(iterable)
+
         try:
             self._n_total = len(iterable)
         except Exception:
             pass
 
-        iterable_as_list = list(iterable)
-
-        # chunked = utils.chunk(iterable_as_list, 1)
-        chunked = utils.chunk(iterable_as_list, 3)
-        # chunked = utils.chunk(iterable_as_list, 5)
+        chunked = utils.chunk(iterable, 1)
+        # chunked = utils.chunk(iterable, 3)
+        # chunked = utils.chunk(iterable, 5)
         # chunked = itertools.chain(
         #     utils.chunk(iterable_as_list[:2000], 1),
         #     utils.chunk(iterable_as_list[2000:], 3),
