@@ -39,7 +39,7 @@ async def main(mapper, workers, interval, output):
             "template": TEMPLATE,
         },
         n_mappers=workers,
-        n_retries=10,
+        n_retries=1,
     )
 
     dataset = FileListIterator(config.IMAGE_LIST_PATH)

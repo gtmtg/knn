@@ -96,14 +96,14 @@ class MapReduceJob:
         iterable = iter(iterable)
 
         # chunked = utils.chunk(iterable, 1)
-        chunked = utils.chunk(iterable, 3)
+        # chunked = utils.chunk(iterable, 3)
         # chunked = utils.chunk(iterable, 5)
         # chunked = utils.chunk(iterable, 7)
-        # chunked = itertools.chain(
-        #     utils.chunk(iterable, 1, until=self.n_mappers),
-        #     utils.chunk(iterable, 3, until=self.n_mappers),
-        #     utils.chunk(iterable, 5),
-        # )
+        chunked = itertools.chain(
+            utils.chunk(iterable, 1, until=2 * self.n_mappers),
+            utils.chunk(iterable, 3, until=2 * self.n_mappers),
+            utils.chunk(iterable, 5),
+        )
         # chunked = itertools.chain(
         #     utils.chunk(iterable, 1, until=2 * self.n_mappers),
         #     utils.chunk(iterable, 5),
