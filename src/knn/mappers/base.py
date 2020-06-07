@@ -138,7 +138,7 @@ class Mapper(abc.ABC):
                 ]
             ):
                 i, output = await coro
-                response.write(
+                await response.write(
                     json.dumps(
                         {"worker_id": self.worker_id, "index": i, "output": output}
                     )
