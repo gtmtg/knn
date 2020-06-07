@@ -1,6 +1,8 @@
 import asyncio
 import click
 import json
+import os
+import time
 
 from knn.jobs import MapReduceJob
 from knn.reducers import Reducer
@@ -46,9 +48,14 @@ async def main(mapper, workers, interval, output):
     await query_job.start(dataset, dataset.close)
 
     results = []
+    delay_time = (
+        interval - (time.time() - float(os.getenv("KNN_START_TIME"))) % interval
+    )
+
     try:
         while not query_job.finished:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(delay_time)
+            delay_time = interval
             results.append(query_job.job_result)
     except KeyboardInterrupt:
         pass

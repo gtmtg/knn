@@ -2,6 +2,8 @@ import click
 from click_option_group import optgroup, RequiredMutuallyExclusiveOptionGroup
 import collections
 import json
+import math
+import os
 
 
 @click.command()
@@ -26,6 +28,11 @@ def main(input, breakdown, throughput, workers):
         print(times["request_time"] - times["compute_time"])  # I/O
         print(times["compute_time"])  # Compute
     elif throughput:
+        start_time = float(os.getenv("KNN_START_TIME"))
+        padding = round((results[0]["progress"]["current_time"] - start_time) / 5)
+        for i in range(padding - 1):
+            print(0.0)
+
         prev_progress = {}
         for result in results:
             progress = result["progress"]
@@ -34,16 +41,35 @@ def main(input, breakdown, throughput, workers):
             print(dn / dt)
             prev_progress = progress
     elif workers:
-        chunks_per_worker = results[-1]["performance"]["mapper_utilization"]
+        performance = results[-1]["performance"]
+        graph_data = collections.defaultdict(int)
+        graph_min = 0
+        graph_max = 0
+        cumulative = False
 
-        histogram_data = collections.defaultdict(int)
-        n_max = 0
-        for n in chunks_per_worker.values():
-            histogram_data[n] += 1
-            n_max = max(n_max, n)
+        if "mapper_utilization" in performance:
+            chunks_per_worker = performance["mapper_utilization"].values()
 
-        for i in range(1, n_max):
-            print(histogram_data[i])
+            graph_min = 1
+            for bucket in chunks_per_worker:
+                graph_data[bucket] += 1
+                graph_max = max(graph_max, bucket)
+        else:
+            boot_times = performance["mapper_boot_times"].values()
+            start_time = float(os.getenv("KNN_START_TIME"))
+            cumulative = True
+
+            for t in boot_times:
+                dt = t - start_time
+                bucket = math.ceil(dt / 5)
+                graph_data[bucket] += 1
+                graph_max = max(graph_max, bucket)
+
+        graph_sum = 0
+        for i in range(graph_min, graph_max + 1):
+            print(graph_data[i] + graph_sum)
+            if cumulative:
+                graph_sum += graph_data[i]
 
 
 if __name__ == "__main__":
