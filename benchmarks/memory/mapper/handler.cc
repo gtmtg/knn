@@ -1,5 +1,6 @@
 #include <iostream>
 #include <chrono>
+#include <random>
 
 using namespace std;
 
@@ -11,12 +12,16 @@ static double b[ARRAY_SIZE];
 static double c[ARRAY_SIZE];
 
 int main() {
+    uniform_real_distribution<double> unif(1.0, 5.0);
+    default_random_engine re;
+    double a_random_double = unif(re);
+
     for (size_t j = 0; j < ARRAY_SIZE; j++) {
-        a[j] = 1.0;
-        b[j] = 2.0;
-        c[j] = 3.0;
+        a[j] = unif(re);
+        b[j] = unif(re);
+        c[j] = unif(re);
     }
-    double scalar = 4.0;
+    double scalar = unif(re);
 
     auto start = chrono::steady_clock::now();
     for (size_t i = 0; i < N_TRIALS; i++) {
