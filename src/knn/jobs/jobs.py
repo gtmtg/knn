@@ -88,24 +88,25 @@ class MapReduceJob:
         assert self._start_time is None  # can't reuse Job instances
         self.start_time = time.time()
 
-        # iterable = list(iterable)
-
         try:
             self._n_total = len(iterable)
         except Exception:
             pass
 
-        chunked = utils.chunk(iterable, 1)
+        iterable = iter(iterable)
+
+        # chunked = utils.chunk(iterable, 1)
         # chunked = utils.chunk(iterable, 3)
         # chunked = utils.chunk(iterable, 5)
+        # chunked = utils.chunk(iterable, 7)
+        chunked = itertools.chain(
+            utils.chunk(iterable, 1, until=2 * self.n_mappers),
+            utils.chunk(iterable, 3, until=2 * self.n_mappers),
+            utils.chunk(iterable, 5),
+        )
         # chunked = itertools.chain(
-        #     utils.chunk(iterable_as_list[:2000], 1),
-        #     utils.chunk(iterable_as_list[2000:], 3),
-        # )
-        # chunked = itertools.chain(
-        #     utils.chunk(iterable_as_list[:2000], 1),
-        #     utils.chunk(iterable_as_list[2000:10000], 3),
-        #     utils.chunk(iterable_as_list[10000:], 5),
+        #     utils.chunk(iterable, 1, until=2 * self.n_mappers),
+        #     utils.chunk(iterable, 5),
         # )
 
         connector = aiohttp.TCPConnector(limit=0)
