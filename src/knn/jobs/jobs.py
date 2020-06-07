@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import json
 import resource
 import time
 import uuid
@@ -16,7 +17,6 @@ from . import defaults
 from typing import (
     Optional,
     Callable,
-    Tuple,
     List,
     Dict,
     Any,
@@ -54,10 +54,9 @@ class MapReduceJob:
         self.reducer = reducer
 
         # Performance stats
-        self._n_requests = 0
         self._n_successful = 0
         self._n_failed = 0
-        self._n_chunks_per_mapper: Dict[str, int] = collections.defaultdict(int)
+        self._n_elements_per_mapper: Dict[str, int] = collections.defaultdict(int)
         self._profiling: Dict[str, Statistics] = collections.defaultdict(Statistics)
 
         # Will be initialized later
@@ -94,14 +93,14 @@ class MapReduceJob:
 
         connector = aiohttp.TCPConnector(limit=0)
         async with aiohttp.ClientSession(connector=connector) as session:
-            for response_tuple in utils.limited_as_completed(
+            for coro in utils.limited_as_completed(
                 (
                     self._request(session, chunk)
                     for chunk in utils.chunk(iterable, self.chunk_size)
                 ),
                 self.n_mappers,
             ):
-                self._handle_chunk_result(*(await response_tuple))
+                await coro
 
         if self._n_total is None:
             self._n_total = self._n_successful + self._n_failed
@@ -127,11 +126,10 @@ class MapReduceJob:
 
         performance = {
             "profiling": {k: v.mean() for k, v in self._profiling.items()},
-            "mapper_utilization": dict(enumerate(self._n_chunks_per_mapper.values())),
+            "mapper_utilization": dict(enumerate(self._n_elements_per_mapper.values())),
         }
 
         progress = {
-            "cost": self.cost,
             "finished": self.finished,
             "n_processed": self._n_successful,
             "n_skipped": self._n_failed,
@@ -150,17 +148,6 @@ class MapReduceJob:
     def finished(self) -> bool:
         return self._n_total == self._n_successful + self._n_failed
 
-    @property
-    def cost(self) -> float:
-        total_billed_time = self._profiling["billed_time"].mean() * len(
-            self._profiling["billed_time"]
-        )
-        return (
-            0.00002400 * total_billed_time
-            + 2 * 0.00000250 * total_billed_time
-            + 0.40 / 1000000 * self._n_requests
-        )
-
     # INTERNAL
 
     def _construct_request(self, chunk: List[JSONType]) -> JSONType:
@@ -170,52 +157,32 @@ class MapReduceJob:
             "inputs": chunk,
         }
 
-    async def _request(
-        self, session: aiohttp.ClientSession, chunk: List[JSONType]
-    ) -> Tuple[JSONType, Optional[JSONType], float]:
-        result = None
-        start_time = 0.0
-        end_time = 0.0
-
+    async def _request(self, session: aiohttp.ClientSession, chunk: List[JSONType]):
         request = self._construct_request(chunk)
 
         for i in range(self.n_retries):
-            start_time = time.time()
-            end_time = start_time
-
             try:
                 async with session.post(self.mapper_url, json=request) as response:
-                    end_time = time.time()
-                    if response.status == 200:
-                        result = await response.json()
-                        break
+                    buffer = b""
+                    async for data, end_of_http_chunk in response.content.iter_chunks():
+                        buffer += data
+                        if end_of_http_chunk:
+                            print(buffer)
+                            # payload = json.loads(buffer)
+                            # i = payload["index"]
+                            # self._handle_result(chunk.pop(i), payload)
+                            buffer = b""
             except aiohttp.ClientConnectionError:
                 break
 
-        return chunk, result, end_time - start_time
+        for input in chunk:
+            self._handle_result(input, None)
 
-    def _handle_chunk_result(
-        self, chunk: List[JSONType], result: Optional[JSONType], elapsed_time: float
-    ):
-        self._n_requests += 1
-
-        if not result:
-            self._n_failed += len(chunk)
+    def _handle_result(self, input: JSONType, result: Optional[JSONType]):
+        if not result or not result.get("output"):
+            self._n_failed += 1
             return
 
-        # Validate
-        assert len(result["outputs"]) == len(chunk)
-        assert "billed_time" in result["profiling"]
-
-        n_successful = sum(1 for r in result["outputs"] if r)
-        self._n_successful += n_successful
-        self._n_failed += len(chunk) - n_successful
-        self._n_chunks_per_mapper[result["worker_id"]] += 1
-
-        self._profiling["total_time"].push(elapsed_time)
-        for k, v in result["profiling"].items():
-            self._profiling[k].push(v)
-
-        for input, output in zip(chunk, result["outputs"]):
-            if output:
-                self.reducer.handle_result(input, output)
+        self._n_successful += 1
+        self._n_elements_per_mapper[result["worker_id"]] += 1
+        self.reducer.handle_result(input, result["output"])
