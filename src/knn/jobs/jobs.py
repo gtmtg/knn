@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import itertools
 import resource
 import time
 import uuid
@@ -92,14 +93,26 @@ class MapReduceJob:
         except Exception:
             pass
 
+        iterable = iter(iterable)
+
+        # chunked = utils.chunk(iterable, 1)
+        # chunked = utils.chunk(iterable, 3)
+        # chunked = utils.chunk(iterable, 5)
+        # chunked = utils.chunk(iterable, 7)
+        chunked = itertools.chain(
+            utils.chunk(iterable, 1, until=2 * self.n_mappers),
+            utils.chunk(iterable, 3, until=2 * self.n_mappers),
+            utils.chunk(iterable, 5),
+        )
+        # chunked = itertools.chain(
+        #     utils.chunk(iterable, 1, until=2 * self.n_mappers),
+        #     utils.chunk(iterable, 5),
+        # )
+
         connector = aiohttp.TCPConnector(limit=0)
         async with aiohttp.ClientSession(connector=connector) as session:
             for response_tuple in utils.limited_as_completed(
-                (
-                    self._request(session, chunk)
-                    for chunk in utils.chunk(iterable, self.chunk_size)
-                ),
-                self.n_mappers,
+                (self._request(session, chunk) for chunk in chunked), self.n_mappers,
             ):
                 self._handle_chunk_result(*(await response_tuple))
 
