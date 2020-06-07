@@ -95,7 +95,7 @@ class MapReduceJob:
         async with aiohttp.ClientSession(connector=connector) as session:
             for coro in utils.limited_as_completed(
                 (
-                    self._request(session, chunk)
+                    self._request(session, list(chunk))
                     for chunk in utils.chunk(iterable, self.chunk_size)
                 ),
                 self.n_mappers,
@@ -161,25 +161,38 @@ class MapReduceJob:
         request = self._construct_request(chunk)
 
         for i in range(self.n_retries):
+            remaining_indices = set(range(len(chunk)))
+
             try:
                 async with session.post(self.mapper_url, json=request) as response:
                     buffer = b""
                     async for data, end_of_http_chunk in response.content.iter_chunks():
                         buffer += data
                         if end_of_http_chunk:
-                            print(buffer)
-                            # payload = json.loads(buffer)
-                            # i = payload["index"]
-                            # self._handle_result(chunk.pop(i), payload)
+                            parts = buffer.decode().split("\r\n")
                             buffer = b""
+                            for part in parts:
+                                try:
+                                    payload = json.loads(part)
+                                    assert isinstance(payload, dict)
+                                except (json.decoder.JSONDecodeError, AssertionError):
+                                    pass
+                                else:
+                                    i = payload.get("index")
+                                    assert i is not None
+                                    self._handle_result(chunk[i], payload)
+                                    remaining_indices.remove(i)
+                                    break
             except aiohttp.ClientConnectionError:
                 break
+
+            chunk = [chunk[i] for i in remaining_indices]
 
         for input in chunk:
             self._handle_result(input, None)
 
     def _handle_result(self, input: JSONType, result: Optional[JSONType]):
-        if not result or not result.get("output"):
+        if not result or result.get("output") is None:
             self._n_failed += 1
             return
 
