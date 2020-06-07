@@ -169,7 +169,10 @@ class MapReduceJob:
                     async for data, end_of_http_chunk in response.content.iter_chunks():
                         buffer += data
                         if end_of_http_chunk:
-                            parts = buffer.decode().split("\r\n")
+                            text = buffer.decode()
+                            if "HTTP/1.1" in text and ("500" in text or "429" in text):
+                                raise RuntimeError(text)
+                            parts = text.split("\r\n")
                             buffer = b""
                             for part in parts:
                                 try:
@@ -178,13 +181,16 @@ class MapReduceJob:
                                 except (json.decoder.JSONDecodeError, AssertionError):
                                     pass
                                 else:
-                                    i = payload.get("index")
-                                    assert i is not None
+                                    i = payload["index"]
                                     self._handle_result(chunk[i], payload)
                                     remaining_indices.remove(i)
                                     break
-            except aiohttp.ClientConnectionError:
-                break
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                print(0)
+            else:
+                print(len(remaining_indices))
 
             chunk = [chunk[i] for i in remaining_indices]
 

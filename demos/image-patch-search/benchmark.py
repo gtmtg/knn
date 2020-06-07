@@ -51,9 +51,7 @@ async def main(mapper, workers, interval, chunk_size, output):
     try:
         while not query_job.finished:
             await asyncio.sleep(interval)
-            result = query_job.job_result
-            results.append(result)
-            print(result["progress"]["n_processed"])
+            results.append(query_job.job_result)
     except KeyboardInterrupt:
         pass
     finally:
