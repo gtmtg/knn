@@ -17,4 +17,6 @@ done
 rm -rf $1/knn
 
 # Deploy Cloud Run handler
-gcloud run deploy mihir-$1-$branch --image gcr.io/$project/mihir-$1-$branch --platform managed --concurrency 1 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-central1 --allow-unauthenticated
+gcloud run deploy mihir-$1-$branch-2 --image gcr.io/$project/mihir-$1-$branch --platform managed --concurrency 2 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-central1 --allow-unauthenticated
+gcloud run deploy mihir-$1-$branch-4 --image gcr.io/$project/mihir-$1-$branch --platform managed --concurrency 4 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-central1 --allow-unauthenticated
+gcloud run deploy mihir-$1-$branch-8 --image gcr.io/$project/mihir-$1-$branch --platform managed --concurrency 8 --cpu 1 --max-instances 1000 --memory 2Gi --timeout 900 --region us-central1 --allow-unauthenticated
