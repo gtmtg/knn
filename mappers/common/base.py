@@ -1,5 +1,7 @@
 import io
+import os
 
+import aiohttp
 from gcloud.aio.storage import Storage
 import numpy as np
 from PIL import Image
@@ -31,11 +33,16 @@ class ResNetBackboneMapper(Mapper):
         self.input_format = cfg.INPUT.FORMAT
 
         # Create connection pools
-        self.storage_client = Storage()
+        self.session = aiohttp.ClientSession()
+        self.storage_client = Storage(session=self.session)
 
     async def download_and_process_image(self, image_bucket, image_path, request_id):
         # Download image
-        image_bytes = await self.storage_client.download(image_bucket, image_path)
+        async with self.session.get(
+            f"https://storage.googleapis.com/{os.path.join(image_bucket, image_path)}"
+        ) as response:
+            assert response.status == 200
+            image_bytes = await response.read()
 
         # Preprocess image
         with self.profiler(request_id, "compute_time"):
