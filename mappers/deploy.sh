@@ -1,20 +1,27 @@
+if [[ $# -ne 1 ]]; then
+    echo "Usage: ./deploy.sh [subdir]"
+    exit 1
+fi
+
 branch=`git rev-parse --abbrev-ref HEAD`
 project=`gcloud config get-value project 2> /dev/null`
+folder=`echo $1 | sed 's:/*$::'`
+name=mihir-$folder-$branch
 
 # Copy shared resources in
-cp common/* $1
-cp -r ../src/knn $1
+cp common/* $folder
+cp -r ../src/knn $folder
 
 # Submit build from within subdirectory
 gcloud config set builds/use_kaniko True
-(cd $1; gcloud builds submit --tag gcr.io/$project/mihir-$1-$branch)
+(cd $folder; gcloud builds submit --tag gcr.io/$project/$name)
 
 # Remove shared resources
 for file in $(ls common/)
 do
-   rm $1/"$file"
+   rm $folder/"$file"
 done
-rm -rf $1/knn
+rm -rf $folder/knn
 
 # Deploy Cloud Run handler
-./reset.sh $1
+./reset.sh $folder
