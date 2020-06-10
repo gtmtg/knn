@@ -21,7 +21,7 @@ class SpatialSearchMapper(ResNetBackboneMapper):
             ).unsqueeze(0),
         }
 
-    @Mapper.SkipIfAssertionError
+    @Mapper.SkipIfError
     async def process_element(self, input, job_id, job_args, request_id, element_index):
         image_bucket = job_args["input_bucket"]
         image_path = input
