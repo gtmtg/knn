@@ -5,8 +5,6 @@ torchvision==0.5.0+cpu
 pycocotools
 detectron2==0.1.1+cpu
 Pillow
-gcloud-aio-auth==3.1.0
-gcloud-aio-storage
 numpy
 sanic
 uvicorn
